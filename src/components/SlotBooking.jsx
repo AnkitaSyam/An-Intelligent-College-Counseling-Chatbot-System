@@ -1,80 +1,70 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CalendarDays, Clock, CheckCircle2 } from 'lucide-react';
+import { db, auth } from '../firebaseConfig';
+import {
+    collection, query, where, onSnapshot,
+    doc, updateDoc, addDoc, serverTimestamp
+} from 'firebase/firestore';
 
 const SlotBooking = () => {
     const [availableSlots, setAvailableSlots] = useState([]);
     const [bookingSuccess, setBookingSuccess] = useState(null);
+    const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
+    const user = auth.currentUser;
 
+    // ── Listen to slots: available ones + slots booked by this user ──
     useEffect(() => {
-        loadSlots();
-        
-        const handleStorage = (e) => {
-            if (e.key === 'counselor_slots') {
-                loadSlots();
-            }
-        };
-        window.addEventListener('storage', handleStorage);
-        return () => window.removeEventListener('storage', handleStorage);
-    }, []);
+        if (!user) return;
 
-    const loadSlots = () => {
-        const stored = localStorage.getItem('counselor_slots');
-        if (stored) {
-            const parsed = JSON.parse(stored).filter(slot => {
-                const status = slot.status || (slot.isBooked ? 'booked' : 'available');
-                const isAvailable = status === 'available';
-                const isMyBooking = slot.bookedBy === 'Current Student (Demo)';
+        // Listen to all slots
+        const unsub = onSnapshot(collection(db, 'counselorSlots'), (snapshot) => {
+            const allSlots = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            const filtered = allSlots.filter(slot => {
+                const isAvailable = slot.status === 'available';
+                const isMyBooking = slot.bookedByUid === user.uid;
                 return isAvailable || isMyBooking;
             });
-            
-            // Sort by date, then time
-            parsed.sort((a, b) => {
+            filtered.sort((a, b) => {
                 if (a.date !== b.date) return a.date.localeCompare(b.date);
                 return a.startTime.localeCompare(b.startTime);
             });
-            
-            setAvailableSlots(parsed);
-        }
+            setAvailableSlots(filtered);
+            setLoading(false);
+        });
+
+        return () => unsub();
+    }, []);
+
+    const handleBookSlot = async (slot) => {
+        if (!user) return;
+
+        // Update slot in Firestore
+        await updateDoc(doc(db, 'counselorSlots', slot.id), {
+            isBooked: true,
+            status: 'booked',
+            bookedBy: user.displayName || user.email,
+            bookedByEmail: user.email,
+            bookedByUid: user.uid
+        });
+
+        // Notify counselor
+        await addDoc(collection(db, 'counselorNotifications'), {
+            text: `${user.displayName || user.email} booked a slot on ${formatDate(slot.date)} at ${formatTime(slot.startTime)}`,
+            type: 'slot',
+            studentEmail: user.email,
+            studentUid: user.uid,
+            slotId: slot.id,
+            read: false,
+            createdAt: serverTimestamp()
+        });
+
+        setBookingSuccess({ date: slot.date, time: slot.startTime });
     };
 
-    const handleBookSlot = (slot) => {
-        // 1. Update slots in localStorage to mark as booked
-        const stored = JSON.parse(localStorage.getItem('counselor_slots') || '[]');
-        const updated = stored.map(s => {
-            if (s.id === slot.id) {
-                return { ...s, isBooked: true, status: 'booked', bookedBy: 'Current Student (Demo)' };
-            }
-            return s;
-        });
-        localStorage.setItem('counselor_slots', JSON.stringify(updated));
-        
-        // 2. Add notification for counselor
-        const notifications = JSON.parse(localStorage.getItem('counselor_notifications') || '[]');
-        notifications.push({ 
-            id: Date.now(), 
-            text: `Current Student (Demo) booked a slot on ${formatDate(slot.date)} at ${formatTime(slot.startTime)}`, 
-            type: 'slot' 
-        });
-        localStorage.setItem('counselor_notifications', JSON.stringify(notifications));
+    const formatDate = (dateString) => new Date(dateString).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 
-        // 3. Update local state
-        setBookingSuccess({
-            date: slot.date,
-            time: slot.startTime
-        });
-        
-        loadSlots(); // Refresh available list
-    };
-
-    // Format date for display (e.g., "10 May")
-    const formatDate = (dateString) => {
-        const options = { day: 'numeric', month: 'short' };
-        return new Date(dateString).toLocaleDateString('en-GB', options);
-    };
-
-    // Format time (e.g., "10:00 AM")
     const formatTime = (timeString) => {
         const [hours, minutes] = timeString.split(':');
         const hour = parseInt(hours, 10);
@@ -85,13 +75,10 @@ const SlotBooking = () => {
 
     const renderSlotAction = (slot) => {
         const status = slot.status || (slot.isBooked ? 'booked' : 'available');
-        
         if (status === 'available') {
             return (
-                <button 
-                    onClick={() => handleBookSlot(slot)}
-                    className="w-full bg-primary hover:bg-secondary text-white hover:text-primary py-2 rounded-lg font-medium transition-colors text-sm"
-                >
+                <button onClick={() => handleBookSlot(slot)}
+                    className="w-full bg-primary hover:bg-secondary text-white hover:text-primary py-2 rounded-lg font-medium transition-colors text-sm">
                     Book Slot
                 </button>
             );
@@ -110,12 +97,8 @@ const SlotBooking = () => {
         } else if (status === 'rejected') {
             return (
                 <div className="w-full text-center">
-                    <span className="block w-full bg-red-100 text-red-700 py-2 rounded-lg font-medium text-sm mb-1">
-                        Rejected
-                    </span>
-                    {slot.remark && (
-                        <span className="text-xs text-red-500 font-medium px-2 italic">{slot.remark}</span>
-                    )}
+                    <span className="block w-full bg-red-100 text-red-700 py-2 rounded-lg font-medium text-sm mb-1">Rejected</span>
+                    {slot.remark && <span className="text-xs text-red-500 font-medium px-2 italic">{slot.remark}</span>}
                 </div>
             );
         }
@@ -124,10 +107,7 @@ const SlotBooking = () => {
     if (bookingSuccess) {
         return (
             <div className="bg-card rounded-2xl p-6 shadow-md border border-gray-100 text-center relative">
-                <button 
-                    onClick={() => setBookingSuccess(null)}
-                    className="absolute top-4 right-4 text-gray-400 hover:text-gray-800 transition-colors text-sm font-medium underline"
-                >
+                <button onClick={() => setBookingSuccess(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-800 transition-colors text-sm font-medium underline">
                     Back to slots
                 </button>
                 <div className="bg-green-100 text-green-600 p-4 rounded-full inline-block mb-4 mt-2">
@@ -135,14 +115,12 @@ const SlotBooking = () => {
                 </div>
                 <h3 className="text-xl font-bold text-gray-800 mb-2">Booking Requested!</h3>
                 <p className="text-gray-600 mb-6">
-                    Your request for a session on <br/>
+                    Your request for a session on <br />
                     <span className="font-semibold text-gray-800">{formatDate(bookingSuccess.date)} at {formatTime(bookingSuccess.time)}</span> is pending approval.
                 </p>
                 <div className="flex gap-4 justify-center">
-                    <button 
-                        onClick={() => navigate('/chat-counselor')}
-                        className="bg-primary text-white hover:bg-secondary hover:text-primary px-6 py-2 rounded-lg font-medium transition-colors"
-                    >
+                    <button onClick={() => navigate('/chat-counselor')}
+                        className="bg-primary text-white hover:bg-secondary hover:text-primary px-6 py-2 rounded-lg font-medium transition-colors">
                         Go to Chat Now
                     </button>
                 </div>
@@ -157,13 +135,12 @@ const SlotBooking = () => {
                 Counseling Slots
             </h3>
 
-            {availableSlots.length === 0 ? (
+            {loading ? (
+                <div className="text-center p-6 text-gray-400">Loading slots...</div>
+            ) : availableSlots.length === 0 ? (
                 <div className="text-center p-6 bg-background rounded-xl border border-gray-200">
                     <p className="text-gray-600 mb-4">No counseling slots currently available.</p>
-                    <button 
-                        onClick={() => navigate('/chat-counselor')}
-                        className="text-primary hover:underline font-medium"
-                    >
+                    <button onClick={() => navigate('/chat-counselor')} className="text-primary hover:underline font-medium">
                         Proceed to Chat anyway
                     </button>
                 </div>
@@ -173,27 +150,21 @@ const SlotBooking = () => {
                         <div key={slot.id} className="bg-background rounded-xl p-4 border border-gray-200 hover:border-secondary transition-colors flex flex-col justify-between h-full">
                             <div>
                                 <div className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                                    <CalendarDays size={14} />
-                                    {formatDate(slot.date)}
+                                    <CalendarDays size={14} />{formatDate(slot.date)}
                                 </div>
                                 <div className="font-bold text-gray-800 text-lg mb-4 flex items-center gap-1.5">
                                     <Clock size={16} className="text-primary" />
                                     {slot.startTime} – {slot.endTime}
                                 </div>
                             </div>
-                            <div className="mt-2">
-                                {renderSlotAction(slot)}
-                            </div>
+                            <div className="mt-2">{renderSlotAction(slot)}</div>
                         </div>
                     ))}
                 </div>
             )}
-            
+
             <div className="mt-6 pt-4 border-t border-gray-100 flex justify-end">
-                 <button 
-                    onClick={() => navigate('/chat-counselor')}
-                    className="text-gray-500 hover:text-primary text-sm font-medium transition-colors"
-                >
+                <button onClick={() => navigate('/chat-counselor')} className="text-gray-500 hover:text-primary text-sm font-medium transition-colors">
                     Or proceed directly to chat →
                 </button>
             </div>

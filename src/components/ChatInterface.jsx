@@ -1,5 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Info, X } from 'lucide-react';
+import { db } from '../firebaseConfig';
+import {
+    collection, addDoc, query, orderBy,
+    onSnapshot, serverTimestamp, doc, updateDoc
+} from 'firebase/firestore';
+
+const formatTimestamp = (ts) => {
+    if (!ts) return new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    if (ts.toDate) return ts.toDate().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    if (typeof ts === 'string' || typeof ts === 'number') return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
 
 const ChatInterface = ({ student }) => {
     const [messages, setMessages] = useState([]);
@@ -7,75 +19,57 @@ const ChatInterface = ({ student }) => {
     const [showModal, setShowModal] = useState(false);
     const messagesEndRef = useRef(null);
 
-    const getAllChats = () => JSON.parse(localStorage.getItem('counseling_all_chats') || '{}');
-    const saveAllChats = (chats) => localStorage.setItem('counseling_all_chats', JSON.stringify(chats));
+    // Chat room ID = student's uid (same as ChatCounselor uses)
+    const chatId = student.id;
 
-    const loadMessages = () => {
-        const chats = getAllChats();
-        if (chats[student.id]) {
-            setMessages(chats[student.id]);
-        } else {
-            const initial = [{ id: Date.now(), text: `Hello ${student.name}, how can I help you today?`, sender: 'counselor' }];
-            setMessages(initial);
-            chats[student.id] = initial;
-            saveAllChats(chats);
-        }
-    };
+    const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    useEffect(() => { scrollToBottom(); }, [messages]);
 
+    // ── Real-time listener for this student's chat ──
     useEffect(() => {
-        loadMessages();
+        if (!chatId) return;
 
-        const handleStorage = (e) => {
-            if (e.key === 'counseling_all_chats') {
-                const chats = JSON.parse(e.newValue || '{}');
-                setMessages(chats[student.id] || []);
-            }
-        };
-        window.addEventListener('storage', handleStorage);
-        
-        const interval = setInterval(() => {
-             const chats = getAllChats();
-             setMessages(prev => {
-                 const current = chats[student.id] || [];
-                 if (current.length !== prev.length) return current;
-                 return prev;
-             });
-        }, 1000);
+        const q = query(
+            collection(db, 'counselorChats', chatId, 'messages'),
+            orderBy('createdAt', 'asc')
+        );
+        const unsub = onSnapshot(q, (snapshot) => {
+            const msgs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            setMessages(msgs);
+        });
+        return () => unsub();
+    }, [chatId]);
 
-        return () => {
-            window.removeEventListener('storage', handleStorage);
-            clearInterval(interval);
-        };
-    }, [student.id]);
-
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
-
-    useEffect(() => {
-        scrollToBottom();
-    }, [messages]);
-
-    const sendMessage = (user, messageText) => {
-        const newMsg = { id: Date.now(), text: messageText, sender: 'counselor' };
-        
-        const chats = getAllChats();
-        const userChat = chats[user.id] || [];
-        chats[user.id] = [...userChat, newMsg];
-        saveAllChats(chats);
-        setMessages(chats[user.id]);
-        
-        // Save notification for student
-        const notifications = JSON.parse(localStorage.getItem('student_notifications') || '[]');
-        notifications.push({ id: Date.now(), text: 'New message from counselor', type: 'message' });
-        localStorage.setItem('student_notifications', JSON.stringify(notifications));
-    };
-
-    const handleSend = (e) => {
+    const handleSend = async (e) => {
         e.preventDefault();
         if (!input.trim()) return;
-        sendMessage(student, input);
+
+        const text = input;
         setInput('');
+
+        // Save counselor message to Firestore
+        await addDoc(collection(db, 'counselorChats', chatId, 'messages'), {
+            text,
+            sender: 'counselor',
+            createdAt: serverTimestamp()
+        });
+
+        // Update chat room metadata so StudentChat can show new message badge
+        await updateDoc(doc(db, 'counselorChats', chatId), {
+            lastSenderRole: 'counselor',
+            lastMessage: text,
+            lastMessageAt: serverTimestamp()
+        }).catch(() => {}); // ignore if doc doesn't exist yet
+
+        // Notify student via Firestore
+        await addDoc(collection(db, 'studentNotifications'), {
+            text: 'New message from your counselor',
+            type: 'message',
+            studentEmail: student.email,
+            studentUid: student.id,
+            read: false,
+            createdAt: serverTimestamp()
+        });
     };
 
     return (
@@ -83,37 +77,31 @@ const ChatInterface = ({ student }) => {
             {/* Top Bar */}
             <div className="bg-card p-4 border-b border-gray-200/50 flex items-center justify-between shadow-sm">
                 <div>
-                    <h2 className="font-bold text-gray-800">{student.name}</h2>
+                    <h2 className="font-bold text-gray-800">{student.name || student.email}</h2>
                     <p className="text-xs text-green-500 flex items-center">
                         <span className="w-2 h-2 bg-green-500 rounded-full mr-1"></span> Online
                     </p>
                 </div>
-                <button 
-                    onClick={() => setShowModal(true)}
-                    className="p-2 text-primary hover:bg-secondary/30 rounded-full transition-colors"
-                >
+                <button onClick={() => setShowModal(true)} className="p-2 text-primary hover:bg-secondary/30 rounded-full transition-colors">
                     <Info size={20} />
                 </button>
             </div>
 
-            {/* Messages Area */}
+            {/* Messages */}
             <div className="flex-1 p-4 overflow-y-auto bg-card/40">
                 <div className="space-y-4">
                     {messages.map((message) => (
-                        <div
-                            key={message.id}
-                            className={`flex flex-col ${message.sender === 'counselor' ? 'items-end' : 'items-start'}`}
-                        >
+                        <div key={message.id} className={`flex flex-col ${message.sender === 'counselor' ? 'items-end' : 'items-start'}`}>
                             <span className="text-xs text-gray-400 mb-1 ml-1 mr-1">
-                                {message.sender === 'counselor' ? 'You' : student.name}
+                                {message.sender === 'counselor' ? 'You' : (student.name || student.email)}
                             </span>
-                            <div
-                                className={`max-w-[75%] rounded-2xl p-3 shadow-sm ${message.sender === 'counselor'
-                                    ? 'bg-primary text-white rounded-br-sm'
-                                    : 'bg-card border border-gray-200 text-gray-800 rounded-bl-sm'
-                                    }`}
-                            >
+                            <div className={`max-w-[75%] rounded-2xl p-3 shadow-sm ${message.sender === 'counselor'
+                                ? 'bg-primary text-white rounded-br-sm'
+                                : 'bg-card border border-gray-200 text-gray-800 rounded-bl-sm'}`}>
                                 <p className="text-[14px] leading-relaxed">{message.text}</p>
+                                <span className={`text-[10px] block mt-1 ${message.sender === 'counselor' ? 'text-blue-100 text-right' : 'text-gray-400 text-left'}`}>
+                                    {formatTimestamp(message.createdAt)}
+                                </span>
                             </div>
                         </div>
                     ))}
@@ -121,7 +109,7 @@ const ChatInterface = ({ student }) => {
                 </div>
             </div>
 
-            {/* Input Area */}
+            {/* Input */}
             <div className="bg-card p-3 border-t border-gray-200/50">
                 <form onSubmit={handleSend} className="flex items-center space-x-2">
                     <input
@@ -154,19 +142,19 @@ const ChatInterface = ({ student }) => {
                         <div className="space-y-4">
                             <div className="bg-background rounded-xl p-3 border border-gray-100">
                                 <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Name</span>
-                                <p className="font-medium text-gray-800 text-lg mt-1">{student.name}</p>
+                                <p className="font-medium text-gray-800 text-lg mt-1">{student.name || '—'}</p>
+                            </div>
+                            <div className="bg-background rounded-xl p-3 border border-gray-100">
+                                <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Email</span>
+                                <p className="font-medium text-gray-800 mt-1">{student.email || '—'}</p>
                             </div>
                             <div className="bg-background rounded-xl p-3 border border-gray-100">
                                 <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">College ID</span>
-                                <p className="font-medium text-gray-800 mt-1">{student.collegeId}</p>
+                                <p className="font-medium text-gray-800 mt-1">{student.collegeId || '—'}</p>
                             </div>
                             <div className="bg-background rounded-xl p-3 border border-gray-100">
-                                <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Batch</span>
-                                <p className="font-medium text-gray-800 mt-1">{student.batch}</p>
-                            </div>
-                            <div className="bg-background rounded-xl p-3 border border-gray-100">
-                                <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Class</span>
-                                <p className="font-medium text-gray-800 mt-1">{student.studentClass}</p>
+                                <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Batch / Class</span>
+                                <p className="font-medium text-gray-800 mt-1">{student.batch || '—'} {student.studentClass ? `· ${student.studentClass}` : ''}</p>
                             </div>
                         </div>
                     </div>

@@ -61,16 +61,18 @@ const CounselorDashboard = () => {
                     </a>
 
                     {/* AI Chat Overview */}
-                    <div className="bg-gradient-to-br from-secondary to-background rounded-2xl p-6 text-primary shadow-lg shadow-secondary/20 transform transition-all duration-300 hover:-translate-y-1 hover:shadow-secondary/40 border border-secondary/30 h-full flex flex-col">
-                        <div className="bg-primary/10 w-12 h-12 rounded-xl flex items-center justify-center mb-4 backdrop-blur-sm text-primary">
-                            <Bot size={28} />
+                    <Link to="/ai-chat-summary" className="block group">
+                        <div className="bg-gradient-to-br from-secondary to-background rounded-2xl p-6 text-primary shadow-lg shadow-secondary/20 transform transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-secondary/40 border border-secondary/30 h-full flex flex-col">
+                            <div className="bg-primary/10 w-12 h-12 rounded-xl flex items-center justify-center mb-4 backdrop-blur-sm text-primary">
+                                <Bot size={28} />
+                            </div>
+                            <h2 className="text-2xl font-bold mb-1">AI Chat Summary</h2>
+                            <p className="text-primary/80 mb-4 font-medium flex-1">Student AI conversations overview</p>
+                            <div className="flex items-center text-sm font-bold bg-primary/10 inline-flex px-4 py-2 rounded-lg backdrop-blur-sm w-max">
+                                View Summary <span className="ml-2">→</span>
+                            </div>
                         </div>
-                        <h2 className="text-2xl font-bold mb-1">AI Chat Summary</h2>
-                        <p className="text-primary/80 mb-4 font-medium flex-1">Student AI conversations overview</p>
-                        <div className="flex items-center text-sm font-bold bg-primary/10 inline-flex px-4 py-2 rounded-lg backdrop-blur-sm opacity-50 cursor-not-allowed w-max">
-                            Coming Soon
-                        </div>
-                    </div>
+                    </Link>
                 </div>
                 
                 <div id="slot-management-section" className="mt-12 bg-card rounded-2xl p-6 shadow-md border border-gray-100">

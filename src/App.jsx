@@ -11,6 +11,7 @@ import StudentChat from "./pages/StudentChat";
 import Notifications from "./pages/Notifications";
 import Settings from "./pages/Settings";
 import StudentSlotManagement from "./pages/StudentSlotManagement";
+import AIChatSummary from "./pages/AIChatSummary";
 
 function App() {
   return (
@@ -32,6 +33,7 @@ function App() {
           <Route path="/counselor-chat" element={<StudentChat />} />
           <Route path="/counselor-notifications" element={<Notifications />} />
           <Route path="/counselor-settings" element={<Settings />} />
+          <Route path="/ai-chat-summary" element={<AIChatSummary />} />
           
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

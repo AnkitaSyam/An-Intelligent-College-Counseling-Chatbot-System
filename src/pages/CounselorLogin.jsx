@@ -1,23 +1,59 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogIn } from 'lucide-react';
+import { auth, db } from '../firebaseConfig';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
 const CounselorLogin = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
 
-    const handleLogin = (e) => {
+    const handleLogin = async (e) => {
         e.preventDefault();
         setError('');
+        setLoading(true);
 
-        if (email.toLowerCase() === "counselor@demo.com" && password === "password123") {
-            const userData = { email, name: "Dr. Smith", role: "counselor", id: "counselor-01" };
-            localStorage.setItem('counselor_currentUser', JSON.stringify(userData));
-            navigate('/counselor-dashboard');
-        } else {
-            setError('Invalid credentials. Please use: counselor@demo.com / password123');
+        try {
+            // Step 1 - Sign in with Firebase Auth
+            const userCredential = await signInWithEmailAndPassword(auth, email, password);
+            const user = userCredential.user;
+
+            // Step 2 - Get user data from Firestore
+            const userDoc = await getDoc(doc(db, 'users', user.uid));
+
+            if (userDoc.exists()) {
+                const userData = userDoc.data();
+
+                // Step 3 - Check role is counselor
+                if (userData.role === 'counselor') {
+                    localStorage.setItem('counselor_currentUser', JSON.stringify({
+                        ...userData,
+                        uid: user.uid
+                    }));
+                    navigate('/counselor-dashboard');
+                } else {
+                    setError('Access denied. This is not a counselor account.');
+                }
+            } else {
+                setError('Counselor account not found. Check Firestore document.');
+            }
+
+        } catch (err) {
+            if (
+                err.code === 'auth/user-not-found' ||
+                err.code === 'auth/wrong-password' ||
+                err.code === 'auth/invalid-credential'
+            ) {
+                setError('Invalid email or password.');
+            } else {
+                setError(err.message);
+            }
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -37,33 +73,31 @@ const CounselorLogin = () => {
                         {error}
                     </div>
                 )}
-                
-                <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl mb-6 text-sm font-medium">
-                    Demo Credentials:<br/>
-                    Email: <span className="font-bold">counselor@demo.com</span><br/>
-                    Password: <span className="font-bold">password123</span>
-                </div>
 
                 <form onSubmit={handleLogin} className="space-y-6">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Email
+                        </label>
                         <input
                             type="email"
                             required
                             className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
-                            placeholder="Enter your email"
+                            placeholder="Enter counselor email"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
                         />
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Password
+                        </label>
                         <input
                             type="password"
                             required
                             className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
-                            placeholder="Enter your password"
+                            placeholder="Enter counselor password"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                         />
@@ -71,14 +105,16 @@ const CounselorLogin = () => {
 
                     <button
                         type="submit"
-                        className="w-full bg-primary hover:bg-secondary text-white hover:text-primary font-medium py-3 rounded-lg transition-colors shadow-lg shadow-primary/30"
+                        disabled={loading}
+                        className="w-full bg-primary hover:bg-secondary text-white hover:text-primary font-medium py-3 rounded-lg transition-colors shadow-lg shadow-primary/30 disabled:opacity-50"
                     >
-                        Login
+                        {loading ? 'Logging in...' : 'Login'}
                     </button>
+
                     <button
                         type="button"
                         onClick={() => navigate('/')}
-                        className="w-full mt-3 bg-card hover:bg-gray-50 text-gray-500 hover:text-gray-700 border border-gray-200 font-medium py-3 rounded-lg transition-colors"
+                        className="w-full bg-card hover:bg-gray-50 text-gray-500 border border-gray-200 font-medium py-3 rounded-lg transition-colors"
                     >
                         Back to Student Login
                     </button>

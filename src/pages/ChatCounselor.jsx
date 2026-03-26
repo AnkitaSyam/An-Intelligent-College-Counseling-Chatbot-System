@@ -1,84 +1,95 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, UserRound, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { db, auth } from '../firebaseConfig';
+import {
+    collection, addDoc, query, orderBy,
+    onSnapshot, serverTimestamp, doc, setDoc, getDoc
+} from 'firebase/firestore';
+
+const formatTimestamp = (ts) => {
+    if (!ts) return new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    if (ts.toDate) return ts.toDate().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    if (typeof ts === 'string' || typeof ts === 'number') return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
 
 const ChatCounselor = () => {
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
+    const [loading, setLoading] = useState(true);
     const messagesEndRef = useRef(null);
-    
-    // We use ID '1' to sync with the mock list in Counselor portal for demo
-    const studentId = '1';
 
-    const getAllChats = () => JSON.parse(localStorage.getItem('counseling_all_chats') || '{}');
-    const saveAllChats = (chats) => localStorage.setItem('counseling_all_chats', JSON.stringify(chats));
+    const user = auth.currentUser;
+    // Chat room ID is based on the student's UID
+    const chatId = user?.uid || 'unknown';
 
-    const loadMessages = () => {
-        const chats = getAllChats();
-        if (chats[studentId]) {
-            setMessages(chats[studentId]);
-        } else {
-            const initial = [{ id: Date.now(), text: "Hello! I'm your assigned counselor. How can I support you today?", sender: 'counselor' }];
-            setMessages(initial);
-            chats[studentId] = initial;
-            saveAllChats(chats);
-        }
-    };
+    const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    useEffect(() => { scrollToBottom(); }, [messages]);
 
+    // ── Ensure chat room doc exists, then listen to messages ──
     useEffect(() => {
-        loadMessages();
+        if (!user) return;
 
-        const handleStorage = (e) => {
-            if (e.key === 'counseling_all_chats') {
-                const chats = JSON.parse(e.newValue || '{}');
-                setMessages(chats[studentId] || []);
+        const ensureChatRoom = async () => {
+            const chatRef = doc(db, 'counselorChats', chatId);
+            const snap = await getDoc(chatRef);
+            if (!snap.exists()) {
+                // Create chat room with welcome message
+                await setDoc(chatRef, {
+                    studentId: user.uid,
+                    studentEmail: user.email,
+                    createdAt: serverTimestamp()
+                });
+                // Add welcome message from counselor
+                await addDoc(collection(db, 'counselorChats', chatId, 'messages'), {
+                    text: "Hello! I'm your assigned counselor. How can I support you today?",
+                    sender: 'counselor',
+                    createdAt: serverTimestamp()
+                });
             }
         };
-        window.addEventListener('storage', handleStorage);
-        
-        const interval = setInterval(() => {
-             const chats = getAllChats();
-             setMessages(prev => {
-                 const current = chats[studentId] || [];
-                 if (current.length !== prev.length) return current;
-                 return prev;
-             });
-        }, 1000);
 
-        return () => {
-            window.removeEventListener('storage', handleStorage);
-            clearInterval(interval);
-        };
-    }, []);
+        ensureChatRoom();
 
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
+        // Real-time listener
+        const q = query(
+            collection(db, 'counselorChats', chatId, 'messages'),
+            orderBy('createdAt', 'asc')
+        );
+        const unsub = onSnapshot(q, (snapshot) => {
+            const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setMessages(msgs);
+            setLoading(false);
+        });
 
-    useEffect(() => {
-        scrollToBottom();
-    }, [messages]);
+        return () => unsub();
+    }, [chatId]);
 
-    const sendMessage = (user, messageText) => {
-        const newMsg = { id: Date.now(), text: messageText, sender: 'student' };
-        const chats = getAllChats();
-        const userChat = chats[user] || [];
-        chats[user] = [...userChat, newMsg];
-        
-        saveAllChats(chats);
-        setMessages(chats[user]);
-
-        // Notify counselor
-        const notifications = JSON.parse(localStorage.getItem('counselor_notifications') || '[]');
-        notifications.push({ id: Date.now(), text: 'New message from student', type: 'message' });
-        localStorage.setItem('counselor_notifications', JSON.stringify(notifications));
-    };
-
-    const handleSend = (e) => {
+    const handleSend = async (e) => {
         e.preventDefault();
-        if (!input.trim()) return;
-        sendMessage(studentId, input);
+        if (!input.trim() || !user) return;
+
+        const text = input;
         setInput('');
+
+        // Save student message
+        await addDoc(collection(db, 'counselorChats', chatId, 'messages'), {
+            text,
+            sender: 'student',
+            senderEmail: user.email,
+            createdAt: serverTimestamp()
+        });
+
+        // Create notification for counselor in Firestore
+        await addDoc(collection(db, 'counselorNotifications'), {
+            text: `New message from student (${user.email})`,
+            type: 'message',
+            chatId,
+            studentEmail: user.email,
+            read: false,
+            createdAt: serverTimestamp()
+        });
     };
 
     return (
@@ -103,27 +114,28 @@ const ChatCounselor = () => {
             </header>
 
             <main className="flex-1 p-4 overflow-y-auto max-w-4xl w-full mx-auto" style={{ height: 'calc(100vh - 140px)' }}>
-                <div className="space-y-6">
-                    {messages.map((message) => (
-                        <div
-                            key={message.id}
-                            className={`flex flex-col ${message.sender === 'student' ? 'items-end' : 'items-start'}`}
-                        >
-                            <span className="text-xs text-gray-400 mb-1 ml-1 mr-1">
-                                {message.sender === 'student' ? 'You' : 'Counselor'}
-                            </span>
-                            <div
-                                className={`max-w-[75%] rounded-2xl p-4 shadow-sm ${message.sender === 'student'
+                {loading ? (
+                    <div className="flex justify-center items-center h-full text-gray-400">Loading messages...</div>
+                ) : (
+                    <div className="space-y-6">
+                        {messages.map((message) => (
+                            <div key={message.id} className={`flex flex-col ${message.sender === 'student' ? 'items-end' : 'items-start'}`}>
+                                <span className="text-xs text-gray-400 mb-1 ml-1 mr-1">
+                                    {message.sender === 'student' ? 'You' : 'Counselor'}
+                                </span>
+                                <div className={`max-w-[75%] rounded-2xl p-4 shadow-sm ${message.sender === 'student'
                                     ? 'bg-primary text-white rounded-br-sm'
-                                    : 'bg-card border border-gray-100 text-gray-800 rounded-bl-sm'
-                                    }`}
-                            >
-                                <p className="text-[15px] leading-relaxed">{message.text}</p>
+                                    : 'bg-card border border-gray-100 text-gray-800 rounded-bl-sm'}`}>
+                                    <p className="text-[15px] leading-relaxed">{message.text}</p>
+                                    <span className={`text-[10px] block mt-1 ${message.sender === 'student' ? 'text-blue-100 text-right' : 'text-gray-400 text-left'}`}>
+                                        {formatTimestamp(message.createdAt)}
+                                    </span>
+                                </div>
                             </div>
-                        </div>
-                    ))}
-                    <div ref={messagesEndRef} />
-                </div>
+                        ))}
+                        <div ref={messagesEndRef} />
+                    </div>
+                )}
             </main>
 
             <footer className="bg-card border-t border-gray-100 p-4 sticky bottom-0">

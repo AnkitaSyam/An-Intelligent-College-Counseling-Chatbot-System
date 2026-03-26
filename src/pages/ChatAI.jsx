@@ -1,216 +1,170 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { db, auth } from '../firebaseConfig';
+import { collection, addDoc, serverTimestamp, query, orderBy, onSnapshot } from 'firebase/firestore';
 
-// ADDED CODE - CONTEXT AWARE BOT LOGIC
-function getBotReply(message, context) {
-    const msg = message.toLowerCase();
+const formatTimestamp = (ts) => {
+  if (!ts) return new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  if (ts.toDate) return ts.toDate().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  if (typeof ts === 'string' || typeof ts === 'number') return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
 
-    // STEP 1: HANDLE FOLLOW-UP CONTEXT
-    const isUnsure = msg.includes("don't know") || msg.includes("dont know") || msg.includes("not sure") || msg.includes("no idea");
+function getBotReply(message, history = []) {
+  const msg = message.toLowerCase();
+  
+  const positiveKeywords = ['okay', 'fine', 'good', 'happy', 'better', 'well', 'great', 'fantastic', 'awesome', 'nice', 'alright', 'cool', 'calm'];
+  const negativeKeywords = ['sad', 'depressed', 'bad', 'anxious', 'awful', 'terrible', 'stressed', 'tired', 'lonely', 'upset', 'overwhelmed', 'not okay', 'horrible', 'crying', 'worried'];
 
-    if (context === "asked_positive_reason") {
-        if (isUnsure) {
-            return {
-                reply: "Anyway, I'm so happy to hear that you are happy! Keep smiling 😊",
-                nextContext: null
-            };
-        }
-        return {
-            reply: "That's wonderful! You should be proud of yourself 😊",
-            nextContext: null
-        };
-    }
+  const isPositive = positiveKeywords.some(kw => msg.includes(kw));
+  const isNegative = negativeKeywords.some(kw => msg.includes(kw));
 
-    if (context === "asked_negative_reason") {
-        if (isUnsure) {
-            return {
-                reply: "It's totally okay not to know. Sometimes feelings are just confusing. Just remember I'm here for you and you're not alone ❤️",
-                nextContext: null
-            };
-        }
-        return {
-            reply: "That sounds really tough. I'm here for you. Want to share more?",
-            nextContext: "continue_support"
-        };
-    }
+  const recentUserMsgs = history.filter(m => m.sender === 'user').slice(-3);
+  const wasNegative = recentUserMsgs.some(m => negativeKeywords.some(kw => m.text.toLowerCase().includes(kw)));
+  
+  const recentBotMsgs = history.filter(m => m.sender === 'bot').slice(-3);
+  const lastBotMsg = recentBotMsgs.length > 0 ? recentBotMsgs[recentBotMsgs.length - 1].text : '';
 
-    if (context === "continue_support") {
-        return {
-            reply: "You're not alone. Talking about it can really help. I'm here with you ❤️",
-            nextContext: null
-        };
-    }
+  let reply = "";
 
-    if (context === "asked_study_help") {
-        return {
-            reply: "Try using small study sessions with breaks. I can help you plan if you want 📚",
-            nextContext: null
-        };
-    }
+  if (isPositive && wasNegative) {
+    reply = "I'm so glad to hear you're feeling better now! What helped you improve your mood?";
+  } else if (isPositive) {
+    const options = [
+      "That's great to hear! Tell me more about what's going well.",
+      "I'm glad you're feeling positive today!",
+      "Awesome! Keep that positive energy going."
+    ];
+    reply = options[Math.floor(Math.random() * options.length)];
+  } else if (isNegative) {
+    const options = [
+      "I hear you, and it's completely okay to feel that way. Would you like to explore this more?",
+      "I'm sorry you're feeling that way. Remember, I'm here to listen.",
+      "That sounds really tough. Have you considered talking to one of our counselors to book a slot?"
+    ];
+    reply = options[Math.floor(Math.random() * options.length)];
+  } else if (msg.includes('hello') || msg.includes('hi') || msg.includes('hey')) {
+    reply = "Hello! How can I support you today?";
+  } else if (msg.includes('slot') || msg.includes('book')) {
+    reply = "You can book a slot with a counselor from the Slot Management section on your dashboard.";
+  } else {
+    const options = [
+      "I'm here to support you. Could you share a bit more?",
+      "I understand. What else is on your mind?",
+      "Thanks for sharing. How does that make you feel overall?"
+    ];
+    reply = options[Math.floor(Math.random() * options.length)];
+  }
 
-    // STEP 2: NORMAL RULES
-    if (msg.includes("not good") || msg.includes("not happy") || msg.includes("unhappy") ||
-        msg.includes("bad day") || msg.includes("sad") || msg.includes("lonely") ||
-        msg.includes("depressed") || msg.includes("worthless") || msg.includes("broken") ||
-        msg.includes("alone") || msg.includes("crying") || msg.includes("unwell") || msg.includes("not bad")) {
-        return {
-            reply: "I'm really sorry you're feeling this way. Do you want to talk about what's bothering you?",
-            nextContext: "asked_negative_reason"
-        };
-    }
+  if (reply === lastBotMsg) {
+    reply = "I see what you mean. We can explore that further whenever you're ready.";
+  }
 
-    if (msg.includes("stress") || msg.includes("worried") || msg.includes("tired") ||
-        msg.includes("anxious") || msg.includes("pressure") || msg.includes("confused") ||
-        msg.includes("upset")) {
-        return {
-            reply: "It sounds like you're feeling overwhelmed. Do you want to tell me more?",
-            nextContext: "asked_negative_reason"
-        };
-    }
-
-    if (msg.includes("happy") || msg.includes("good") || msg.includes("great") ||
-        msg.includes("excited") || msg.includes("relieved") || msg.includes("fine") ||
-        msg.includes("okay")) {
-        return {
-            reply: "That's really nice to hear! What made you feel this way?",
-            nextContext: "asked_positive_reason"
-        };
-    }
-
-    if (msg.includes("exam") || msg.includes("study") || msg.includes("marks")) {
-        return {
-            reply: "Studies can feel stressful sometimes. Do you want help managing it?",
-            nextContext: "asked_study_help"
-        };
-    }
-
-    if (msg.includes("hi") || msg.includes("hello") || msg.includes("hey")) {
-        return {
-            reply: "Hi! How are you feeling today?",
-            nextContext: null
-        };
-    }
-
-    if (msg.includes("thank you") || msg.includes("thanks") || msg.includes("grateful") || msg.includes("appreciate")) {
-        return {
-            reply: "You're very welcome! I will always be there for you.",
-            nextContext: null
-        };
-    }
-
-    // LONG MESSAGE SUPPORT
-    if (msg.split(" ").length > 8) {
-        return {
-            reply: "Thank you for sharing that. I'm here to listen. Tell me more if you'd like.",
-            nextContext: null
-        };
-    }
-
-    return {
-        reply: "I'm not sure I understood that. Can you explain a bit more?",
-        nextContext: null
-    };
+  return reply;
 }
 
 const ChatAI = () => {
-    const [messages, setMessages] = useState([
-        { id: 1, text: "Hello! I'm your AI mental health assistant. How are you feeling today?", sender: 'ai' }
-    ]);
-    const [input, setInput] = useState('');
-    const [context, setContext] = useState(null); // ADDED: context state
-    const messagesEndRef = useRef(null);
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const bottomRef = useRef(null);
 
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (!user) return;
 
-    useEffect(() => {
-        scrollToBottom();
-    }, [messages]);
-
-    const handleSend = (e) => {
-        e.preventDefault();
-        if (!input.trim()) return;
-
-        const newMsg = { id: Date.now(), text: input, sender: 'user' };
-        setMessages(prev => [...prev, newMsg]);
-
-        // Compute bot response with current context
-        const botResponse = getBotReply(input, context);
-
-        // Update context for the next interaction
-        setContext(botResponse.nextContext);
-        setInput('');
-
-        // Simulate AI response delay
-        setTimeout(() => {
-            setMessages(prev => [...prev, { id: Date.now() + 1, text: botResponse.reply, sender: 'ai' }]);
-        }, 1000);
-    };
-
-    return (
-        <div className="min-h-screen bg-background flex flex-col">
-            <header className="bg-card border-b border-gray-100 p-4 sticky top-0 z-10 flex items-center justify-between shadow-sm">
-                <div className="flex items-center space-x-4">
-                    <Link to="/dashboard" className="p-2 hover:bg-gray-100 rounded-full transition-colors">
-                        <ArrowLeft size={20} className="text-gray-600" />
-                    </Link>
-                    <div className="flex items-center space-x-3">
-                        <div className="bg-blue-100 text-blue-600 p-2 rounded-full">
-                            <Bot size={24} />
-                        </div>
-                        <div>
-                            <h1 className="font-bold text-gray-800">AI Assistant</h1>
-                            <p className="text-xs text-green-500 font-medium flex items-center">
-                                <span className="w-2 h-2 bg-green-500 rounded-full mr-1"></span> Online
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            </header>
-
-            <main className="flex-1 p-4 overflow-y-auto max-w-4xl w-full mx-auto" style={{ height: 'calc(100vh - 140px)' }}>
-                <div className="space-y-6">
-                    {messages.map((message) => (
-                        <div
-                            key={message.id}
-                            className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-                        >
-                            <div
-                                className={`max-w-[75%] rounded-2xl p-4 shadow-sm ${message.sender === 'user'
-                                    ? 'bg-primary text-white rounded-br-sm'
-                                    : 'bg-card border border-gray-100 text-gray-800 rounded-bl-sm'
-                                    }`}
-                            >
-                                <p className="text-[15px] leading-relaxed">{message.text}</p>
-                            </div>
-                        </div>
-                    ))}
-                    <div ref={messagesEndRef} />
-                </div>
-            </main>
-
-            <footer className="bg-card border-t border-gray-100 p-4 sticky bottom-0">
-                <form onSubmit={handleSend} className="max-w-4xl mx-auto flex items-center space-x-3">
-                    <input
-                        type="text"
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        placeholder="Type your message..."
-                        className="flex-1 bg-background border border-gray-200 text-gray-800 px-5 py-3 rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:bg-card transition-all text-[15px]"
-                    />
-                    <button
-                        type="submit"
-                        disabled={!input.trim()}
-                        className="bg-primary text-white p-3 rounded-full hover:bg-secondary hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-primary/20 flex-shrink-0"
-                    >
-                        <Send size={20} className="ml-1" />
-                    </button>
-                </form>
-            </footer>
-        </div>
+    const q = query(
+      collection(db, 'aiChats', user.uid, 'messages'),
+      orderBy('timestamp', 'asc')
     );
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      setMessages(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const sendMessage = async () => {
+    const user = auth.currentUser;
+    if (!input.trim() || !user) return;
+
+    const userMsg = input.trim();
+    setInput('');
+
+    await addDoc(collection(db, 'aiChats', user.uid, 'messages'), {
+      text: userMsg,
+      sender: 'user',
+      timestamp: serverTimestamp()
+    });
+
+    const botReply = getBotReply(userMsg, messages);
+    await addDoc(collection(db, 'aiChats', user.uid, 'messages'), {
+      text: botReply,
+      sender: 'bot',
+      timestamp: serverTimestamp()
+    });
+
+    // Save chat to localStorage for Counselor dashboard
+    const localUser = JSON.parse(localStorage.getItem('counseling_currentUser'));
+    if (localUser && localUser.email) {
+      const allAiChats = JSON.parse(localStorage.getItem('counseling_all_ai_chats')) || {};
+      if (!allAiChats[localUser.email]) {
+        allAiChats[localUser.email] = {
+          studentName: localUser.name || 'Student',
+          studentEmail: localUser.email,
+          messages: []
+        };
+      }
+      allAiChats[localUser.email].messages.push(
+        { text: userMsg, sender: 'user', timestamp: new Date().toISOString(), id: Date.now() + '-user' },
+        { text: botReply, sender: 'bot', timestamp: new Date().toISOString(), id: Date.now() + '-bot' }
+      );
+      localStorage.setItem('counseling_all_ai_chats', JSON.stringify(allAiChats));
+    }
+  };
+
+
+  return (
+    <div className="flex flex-col h-screen bg-gray-50">
+      <div className="bg-white border-b px-6 py-4 flex items-center space-x-3">
+        <Link to="/student-dashboard"><ArrowLeft size={20} /></Link>
+        <Bot size={22} className="text-primary" />
+        <span className="font-semibold text-lg">AI Counselor</span>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+        {messages.map((msg) => (
+          <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[75%] px-4 py-2 rounded-2xl text-sm flex flex-col ${msg.sender === 'user' ? 'bg-primary text-white rounded-br-none' : 'bg-white border border-gray-200 text-gray-800 rounded-bl-none shadow-sm'}`}>
+              <span>{msg.text}</span>
+              <span className={`text-[10px] block mt-1 text-right ${msg.sender === 'user' ? 'text-blue-100' : 'text-gray-400'}`}>
+                {formatTimestamp(msg.timestamp)}
+              </span>
+            </div>
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+
+      <div className="bg-white border-t px-4 py-3 flex space-x-2">
+        <input
+          className="flex-1 border rounded-xl px-4 py-2 text-sm outline-none"
+          placeholder="Type a message..."
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+        />
+        <button onClick={sendMessage} className="bg-primary text-white p-2 rounded-xl">
+          <Send size={18} />
+        </button>
+      </div>
+    </div>
+  );
 };
 
 export default ChatAI;

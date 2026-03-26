@@ -1,33 +1,39 @@
 import React, { useState } from 'react';
 import CounselorSidebar from '../components/CounselorSidebar';
 import { ShieldCheck, UserPlus, CheckCircle2 } from 'lucide-react';
+import { db } from '../firebaseConfig';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 const Settings = () => {
     const [tutorEmail, setTutorEmail] = useState('');
     const [studentName, setStudentName] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
+    const [loading, setLoading] = useState(false);
 
-    const handleGrantAccess = (e) => {
+    const handleGrantAccess = async (e) => {
         e.preventDefault();
-        
-        // Mock save logic
-        const accesses = JSON.parse(localStorage.getItem('tutor_access') || '[]');
-        accesses.push({
-            id: Date.now(),
-            tutorEmail,
-            studentName,
-            dateGranted: new Date().toISOString()
-        });
-        localStorage.setItem('tutor_access', JSON.stringify(accesses));
-        
-        setSuccessMsg(`Access successfully granted to ${tutorEmail} for student ${studentName}.`);
-        setTutorEmail('');
-        setStudentName('');
-        
-        // Hide message after 3 seconds
-        setTimeout(() => {
-            setSuccessMsg('');
-        }, 3000);
+        setLoading(true);
+
+        try {
+            // Save tutor access to Firestore
+            await addDoc(collection(db, 'tutorAccess'), {
+                tutorEmail,
+                studentName,
+                dateGranted: serverTimestamp(),
+                grantedBy: 'counselor'
+            });
+
+            setSuccessMsg(`Access successfully granted to ${tutorEmail} for student ${studentName}.`);
+            setTutorEmail('');
+            setStudentName('');
+
+            setTimeout(() => setSuccessMsg(''), 3000);
+        } catch (error) {
+            console.error('Error granting access:', error);
+            alert('Failed to grant access. Please try again.');
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
@@ -48,7 +54,7 @@ const Settings = () => {
                     </div>
 
                     <p className="text-gray-600 mb-6">
-                        Grant a tutor access to a specific student's details and chat history. 
+                        Grant a tutor access to a specific student's details and chat history.
                         The tutor will only be able to view information related to the assigned student.
                     </p>
 
@@ -86,10 +92,11 @@ const Settings = () => {
 
                         <button
                             type="submit"
-                            className="bg-primary hover:bg-secondary text-white hover:text-primary font-medium py-3 px-6 rounded-lg transition-colors shadow-lg shadow-primary/30 flex items-center space-x-2"
+                            disabled={loading}
+                            className="bg-primary hover:bg-secondary text-white hover:text-primary font-medium py-3 px-6 rounded-lg transition-colors shadow-lg shadow-primary/30 flex items-center space-x-2 disabled:opacity-60"
                         >
                             <UserPlus size={20} />
-                            <span>Grant Tutor Access</span>
+                            <span>{loading ? 'Saving...' : 'Grant Tutor Access'}</span>
                         </button>
                     </form>
                 </div>

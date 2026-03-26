@@ -1,29 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Bell, Settings, LogOut } from 'lucide-react';
+import { db, auth } from '../firebaseConfig';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { signOut } from 'firebase/auth';
 
 const CounselorSidebar = () => {
     const navigate = useNavigate();
     const [unreadCount, setUnreadCount] = useState(0);
 
+    // ── Real-time unread notification count from Firestore ──
     useEffect(() => {
-        const checkNotifications = () => {
-            const notifs = JSON.parse(localStorage.getItem('counselor_notifications') || '[]');
-            setUnreadCount(notifs.length);
-        };
-        
-        checkNotifications();
-        window.addEventListener('storage', checkNotifications);
-        const interval = setInterval(checkNotifications, 2000);
-        
-        return () => {
-            window.removeEventListener('storage', checkNotifications);
-            clearInterval(interval);
-        };
+        const q = query(
+            collection(db, 'counselorNotifications'),
+            where('read', '==', false)
+        );
+        const unsub = onSnapshot(q, (snapshot) => {
+            setUnreadCount(snapshot.size);
+        });
+        return () => unsub();
     }, []);
 
-    const handleLogout = () => {
-        localStorage.removeItem('counselor_currentUser');
+    const handleLogout = async () => {
+        await signOut(auth);
         navigate('/counselor-login');
     };
 
@@ -36,9 +35,7 @@ const CounselorSidebar = () => {
     return (
         <div className="w-64 h-screen bg-primary border-r border-primary/20 flex flex-col p-6 fixed left-0 top-0 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-50">
             <div className="flex items-center space-x-3 mb-10 pl-2">
-                <span className="text-xl font-bold text-white">
-                    Counselor Portal
-                </span>
+                <span className="text-xl font-bold text-white">Counselor Portal</span>
             </div>
 
             <nav className="flex-1 space-y-2">
@@ -46,6 +43,7 @@ const CounselorSidebar = () => {
                     <LayoutDashboard size={20} />
                     <span className="font-medium">Dashboard</span>
                 </NavLink>
+
                 <NavLink to="/counselor-notifications" className={navItemClass}>
                     <div className="relative">
                         <Bell size={20} />
@@ -63,6 +61,7 @@ const CounselorSidebar = () => {
                         </span>
                     )}
                 </NavLink>
+
                 <NavLink to="/counselor-settings" className={navItemClass}>
                     <Settings size={20} />
                     <span className="font-medium">Settings</span>

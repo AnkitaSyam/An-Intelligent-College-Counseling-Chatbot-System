@@ -6,79 +6,70 @@ import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 const Register = () => {
-    const [formData, setFormData] = useState({
-        name: '',
-        collegeId: '',
-        email: '',
-        username: '',
-        password: ''
-    });
+    const [fullName, setFullName] = useState('');
+    const [collegeId, setCollegeId] = useState('');
+    const [username, setUsername] = useState('');
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
     const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
-
-    const handleChange = (e) => {
-        setFormData({ ...formData, [e.target.name]: e.target.value });
-    };
-
-    const validateEmail = (email) => {
-        const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        return re.test(email);
-    };
 
     const handleRegister = async (e) => {
         e.preventDefault();
         setError('');
-
-        if (!validateEmail(formData.email)) {
-            setError('Invalid email format');
-            return;
-        }
+        setLoading(true);
 
         try {
-            // Create user with Firebase Auth
-            const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
+            // Step 1 - Create user in Firebase Auth
+            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
             const user = userCredential.user;
 
-            const userData = {
+            // Step 2 - Save user details in Firestore
+            await setDoc(doc(db, 'users', user.uid), {
                 uid: user.uid,
-                name: formData.name,
-                email: formData.email,
-                role: "student",
-                studentId: formData.collegeId,
-                username: formData.username,
+                fullName,
+                collegeId,
+                username,
+                email,
+                role: 'student',
                 createdAt: serverTimestamp()
-            };
+            });
 
-            // Save to Firestore "users" collection
-            await setDoc(doc(db, "users", user.uid), userData);
-
-            // Persist login using localStorage
+            // Step 3 - Save to localStorage and go to dashboard
             localStorage.setItem('counseling_currentUser', JSON.stringify({
-                ...userData,
-                createdAt: new Date().toISOString()
+                uid: user.uid,
+                fullName,
+                collegeId,
+                username,
+                email,
+                role: 'student'
             }));
 
-            // Dashboard
             navigate('/dashboard');
-        } catch (error) {
-            console.error("Error registering user:", error);
-            if (error.code === 'auth/email-already-in-use') {
-                setError('Email already registered');
+
+        } catch (err) {
+            if (err.code === 'auth/email-already-in-use') {
+                setError('An account with this email already exists.');
+            } else if (err.code === 'auth/weak-password') {
+                setError('Password must be at least 6 characters.');
             } else {
-                setError(error.message);
+                setError(err.message);
             }
+        } finally {
+            setLoading(false);
         }
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-background p-4 py-12">
+        <div className="min-h-screen flex items-center justify-center bg-background p-4">
             <div className="bg-card rounded-2xl shadow-xl w-full max-w-md p-8">
                 <div className="text-center mb-8">
                     <div className="bg-secondary/30 text-primary p-3 rounded-full inline-block mb-4">
                         <UserPlus size={32} />
                     </div>
                     <h1 className="text-2xl font-bold text-gray-800">Create Account</h1>
-                    <p className="text-gray-500 mt-2">Join the Counseling System</p>
+                    <p className="text-gray-500 mt-2">Intelligent College Counseling System</p>
                 </div>
 
                 {error && (
@@ -89,75 +80,82 @@ const Register = () => {
 
                 <form onSubmit={handleRegister} className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Full Name
+                        </label>
                         <input
                             type="text"
-                            name="name"
                             required
-                            className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
-                            placeholder="John Doe"
-                            value={formData.name}
-                            onChange={handleChange}
+                            className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
+                            placeholder="Enter your full name"
+                            value={fullName}
+                            onChange={(e) => setFullName(e.target.value)}
                         />
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">College ID</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            College ID
+                        </label>
                         <input
                             type="text"
-                            name="collegeId"
                             required
-                            className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
-                            placeholder="12345678"
-                            value={formData.collegeId}
-                            onChange={handleChange}
+                            className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
+                            placeholder="Enter your college ID"
+                            value={collegeId}
+                            onChange={(e) => setCollegeId(e.target.value)}
                         />
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Username
+                        </label>
+                        <input
+                            type="text"
+                            required
+                            className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
+                            placeholder="Choose a username"
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Email
+                        </label>
                         <input
                             type="email"
-                            name="email"
                             required
-                            className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
-                            placeholder="john@college.edu"
-                            value={formData.email}
-                            onChange={handleChange}
+                            className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
+                            placeholder="Enter your email"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
                         />
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
-                        <input
-                            type="text"
-                            name="username"
-                            required
-                            className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
-                            placeholder="johndoe"
-                            value={formData.username}
-                            onChange={handleChange}
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Password
+                        </label>
                         <input
                             type="password"
-                            name="password"
                             required
-                            className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
-                            placeholder="••••••••"
-                            value={formData.password}
-                            onChange={handleChange}
+                            minLength={6}
+                            className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
+                            placeholder="Min 6 characters"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
                         />
                     </div>
 
                     <button
                         type="submit"
-                        className="w-full bg-primary hover:bg-secondary text-white hover:text-primary font-medium py-3 rounded-lg transition-colors shadow-lg shadow-primary/30 mt-6"
+                        disabled={loading}
+                        className="w-full bg-primary hover:bg-secondary text-white hover:text-primary font-medium py-3 rounded-lg transition-colors shadow-lg shadow-primary/30 disabled:opacity-50 mt-2"
                     >
-                        Register
+                        {loading ? 'Registering...' : 'Register'}
                     </button>
                 </form>
 
