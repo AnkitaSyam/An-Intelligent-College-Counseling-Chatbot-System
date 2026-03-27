@@ -12,6 +12,10 @@ import Notifications from "./pages/Notifications";
 import Settings from "./pages/Settings";
 import StudentSlotManagement from "./pages/StudentSlotManagement";
 import AIChatSummary from "./pages/AIChatSummary";
+import TutorLogin from "./pages/TutorLogin";
+import TutorDashboard from "./pages/TutorDashboard";
+import TutorChat from "./pages/TutorChat";
+import CounselorTutorRequests from "./pages/CounselorTutorRequests";
 
 function App() {
   return (
@@ -34,6 +38,12 @@ function App() {
           <Route path="/counselor-notifications" element={<Notifications />} />
           <Route path="/counselor-settings" element={<Settings />} />
           <Route path="/ai-chat-summary" element={<AIChatSummary />} />
+          <Route path="/counselor-tutor-requests" element={<CounselorTutorRequests />} />
+          
+          {/* Tutor Routes */}
+          <Route path="/tutor-login" element={<TutorLogin />} />
+          <Route path="/tutor-dashboard" element={<TutorDashboard />} />
+          <Route path="/tutor-chat" element={<TutorChat />} />
           
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

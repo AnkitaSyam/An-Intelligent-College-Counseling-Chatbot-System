@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { LogIn } from 'lucide-react';
 import { auth, db } from '../firebaseConfig';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 
-const Login = () => {
+const TutorLogin = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
@@ -28,22 +28,18 @@ const Login = () => {
             if (userDoc.exists()) {
                 const userData = userDoc.data();
 
-                // Step 3 - Make sure it is a student not counselor
-                if (userData.role !== 'student') {
-                    setError('Please use the Counselor Portal to login.');
-                    setLoading(false);
-                    return;
+                // Step 3 - Check role is tutor
+                if (userData.role === 'tutor') {
+                    localStorage.setItem('tutor_currentUser', JSON.stringify({
+                        ...userData,
+                        uid: user.uid
+                    }));
+                    navigate('/tutor-dashboard');
+                } else {
+                    setError('Access denied. This is not a tutor account.');
                 }
-
-                // Step 4 - Save to localStorage and go to dashboard
-                localStorage.setItem('counseling_currentUser', JSON.stringify({
-                    ...userData,
-                    uid: user.uid
-                }));
-                navigate('/dashboard');
-
             } else {
-                setError('User data not found. Please register again.');
+                setError('Tutor account not found. Please contact administration.');
             }
 
         } catch (err) {
@@ -68,7 +64,7 @@ const Login = () => {
                     <div className="bg-secondary/30 text-primary p-3 rounded-full inline-block mb-4">
                         <LogIn size={32} />
                     </div>
-                    <h1 className="text-2xl font-bold text-gray-800">Welcome Back</h1>
+                    <h1 className="text-2xl font-bold text-gray-800">Tutor Portal</h1>
                     <p className="text-gray-500 mt-2">Intelligent College Counseling System</p>
                 </div>
 
@@ -87,7 +83,7 @@ const Login = () => {
                             type="email"
                             required
                             className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
-                            placeholder="Enter your email"
+                            placeholder="Enter tutor email"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
                         />
@@ -101,7 +97,7 @@ const Login = () => {
                             type="password"
                             required
                             className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
-                            placeholder="Enter your password"
+                            placeholder="Enter tutor password"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                         />
@@ -114,33 +110,18 @@ const Login = () => {
                     >
                         {loading ? 'Logging in...' : 'Login'}
                     </button>
-                </form>
 
-                <div className="mt-8 pt-6 border-t border-gray-100 flex flex-col items-center gap-4">
-                    <p className="text-sm text-gray-600">
-                        New user?{' '}
-                        <Link to="/register" className="text-primary hover:text-secondary font-semibold hover:underline">
-                            Register here
-                        </Link>
-                    </p>
-                    <div className="flex flex-col sm:flex-row gap-4 items-center justify-center w-full mt-4">
-                        <Link
-                            to="/counselor-login"
-                            className="text-sm font-bold text-gray-500 hover:text-primary transition-colors hover:underline"
-                        >
-                            → Access Counselor Portal
-                        </Link>
-                        <Link
-                            to="/tutor-login"
-                            className="text-sm font-bold text-gray-500 hover:text-primary transition-colors hover:underline"
-                        >
-                            → Access Tutor Portal
-                        </Link>
-                    </div>
-                </div>
+                    <button
+                        type="button"
+                        onClick={() => navigate('/')}
+                        className="w-full bg-card hover:bg-gray-50 text-gray-500 border border-gray-200 font-medium py-3 rounded-lg transition-colors mt-4"
+                    >
+                        Back to Student Login
+                    </button>
+                </form>
             </div>
         </div>
     );
 };
 
-export default Login;
+export default TutorLogin;

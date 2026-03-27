@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Bell, Settings, LogOut } from 'lucide-react';
+import { LayoutDashboard, Bell, Settings, LogOut, Shield } from 'lucide-react';
 import { db, auth } from '../firebaseConfig';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
@@ -60,6 +60,11 @@ const CounselorSidebar = () => {
                             {unreadCount}
                         </span>
                     )}
+                </NavLink>
+
+                <NavLink to="/counselor-tutor-requests" className={navItemClass}>
+                    <Shield size={20} />
+                    <span className="font-medium">Tutor Requests</span>
                 </NavLink>
 
                 <NavLink to="/counselor-settings" className={navItemClass}>
