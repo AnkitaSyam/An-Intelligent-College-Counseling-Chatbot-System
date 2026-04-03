@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, X, Calendar as CalendarIcon, Clock, Check, XCircle } from 'lucide-react';
 import { db } from '../firebaseConfig';
 import {
-    collection, addDoc, deleteDoc, doc, updateDoc,
+    collection, addDoc, deleteDoc, doc, updateDoc, setDoc,
     onSnapshot, query, orderBy, serverTimestamp
 } from 'firebase/firestore';
 
@@ -29,7 +29,7 @@ const SlotCalendar = () => {
         e.preventDefault();
         if (!date || !startTime || !endTime) return;
         if (startTime >= endTime) { alert("End time must be after start time"); return; }
-        
+
         const selectedDateTime = new Date(`${date}T${startTime}`);
         const now = new Date();
         if (selectedDateTime < now) {
@@ -59,13 +59,32 @@ const SlotCalendar = () => {
     };
 
     const handleApproveSlot = async (id, bookedByEmail) => {
+        // Find the slot to get its details and bookedByUid
+        const slot = slots.find(s => s.id === id);
+        if (!slot) return;
+
+        // Step 1 — Update slot status
         await updateDoc(doc(db, 'counselorSlots', id), { status: 'confirmed' });
 
-        // Notify the student via Firestore
+        // Step 2 — Update counselorChats so student can chat
+        if (slot.bookedByUid) {
+            await setDoc(doc(db, 'counselorChats', slot.bookedByUid), {
+                slotStatus: 'approved',
+                approvedSlot: {
+                    date: slot.date,
+                    time: slot.startTime,
+                    endTime: slot.endTime,
+                    slotId: slot.id
+                }
+            }, { merge: true });
+        }
+
+        // Step 3 — Notify the student
         await addDoc(collection(db, 'studentNotifications'), {
-            text: 'Counselor approved the slot. You can chat at the scheduled time.',
-            type: 'update',
+            text: `Your slot on ${slot.date} at ${slot.startTime} has been approved. You can now chat with your counselor!`,
+            type: 'slot_approval',
             studentEmail: bookedByEmail,
+            studentUid: slot.bookedByUid,
             read: false,
             createdAt: serverTimestamp()
         });

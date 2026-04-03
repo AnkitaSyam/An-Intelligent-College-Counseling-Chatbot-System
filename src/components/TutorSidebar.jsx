@@ -1,29 +1,27 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, LogOut, CalendarDays, Bell, Settings as SettingsIcon } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { MessageSquare, LogOut, Settings as SettingsIcon, Bell } from 'lucide-react';
 import { db } from '../firebaseConfig';
-import { collection, onSnapshot, query } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 
-const Sidebar = () => {
+const TutorSidebar = () => {
     const navigate = useNavigate();
     const [unreadCount, setUnreadCount] = useState(0);
 
     useEffect(() => {
-        const userStr = localStorage.getItem('counseling_currentUser');
+        const userStr = localStorage.getItem('tutor_currentUser');
         if (!userStr) return;
         const user = JSON.parse(userStr);
         if (!user || !user.uid) return;
 
-        // Fetch all and filter locally to bypass Firebase composite index errors
-        const q = query(collection(db, 'studentNotifications'));
+        const q = query(
+            collection(db, 'tutorNotifications'),
+            where('tutorId', '==', user.uid)
+        );
         const unsub = onSnapshot(q, (snapshot) => {
             let count = 0;
-            snapshot.docs.forEach(doc => {
-                const d = doc.data();
-                if ((d.studentId === user.uid || d.userId === user.uid) && d.read === false) {
-                    count++;
-                }
+            snapshot.docs.forEach((doc) => {
+                if (doc.data().read === false) count++;
             });
             setUnreadCount(count);
         });
@@ -31,8 +29,8 @@ const Sidebar = () => {
     }, []);
 
     const handleLogout = () => {
-        localStorage.removeItem('counseling_currentUser');
-        navigate('/');
+        localStorage.removeItem('tutor_currentUser');
+        navigate('/tutor-login');
     };
 
     const navItemClass = ({ isActive }) =>
@@ -42,23 +40,18 @@ const Sidebar = () => {
         }`;
 
     return (
-        <div className="w-64 h-screen bg-primary border-r border-primary/20 flex flex-col p-6 fixed left-0 top-0 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-40">
+        <div className="w-64 h-screen bg-primary border-r border-primary/20 flex flex-col p-6 fixed left-0 top-0 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-50">
             <div className="flex items-center space-x-3 mb-10 pl-2">
-                <span className="text-xl font-bold text-white leading-tight">
-                    Intelligent College<br/>Counseling System
-                </span>
+                <span className="text-xl font-bold text-white">Tutor Portal</span>
             </div>
 
             <nav className="flex-1 space-y-2">
-                <NavLink to="/dashboard" className={navItemClass}>
-                    <LayoutDashboard size={20} />
+                <NavLink to="/tutor-dashboard" className={navItemClass}>
+                    <MessageSquare size={20} />
                     <span className="font-medium">Dashboard</span>
                 </NavLink>
-                <NavLink to="/slot-management" className={navItemClass}>
-                    <CalendarDays size={20} />
-                    <span className="font-medium">Slot Management</span>
-                </NavLink>
-                <NavLink to="/notifications" className={navItemClass}>
+
+                <NavLink to="/tutor-notifications" className={navItemClass}>
                     <div className="relative">
                         <Bell size={20} />
                         {unreadCount > 0 && (
@@ -75,7 +68,8 @@ const Sidebar = () => {
                         </span>
                     )}
                 </NavLink>
-                <NavLink to="/profile" className={navItemClass}>
+
+                <NavLink to="/tutor-settings" className={navItemClass}>
                     <SettingsIcon size={20} />
                     <span className="font-medium">Settings</span>
                 </NavLink>
@@ -94,4 +88,4 @@ const Sidebar = () => {
     );
 };
 
-export default Sidebar;
+export default TutorSidebar;

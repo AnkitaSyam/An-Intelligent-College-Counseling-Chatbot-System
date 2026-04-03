@@ -18,8 +18,9 @@ const ChatAI = () => {
   const bottomRef = useRef(null);
 
   useEffect(() => {
-    const user = auth.currentUser;
-    if (!user) return;
+    const userStr = localStorage.getItem('counseling_currentUser');
+    if (!userStr) return;
+    const user = JSON.parse(userStr);
 
     const q = query(
       collection(db, 'aiChats', user.uid, 'messages'),
@@ -38,8 +39,9 @@ const ChatAI = () => {
   }, [messages]);
 
   const sendMessage = async () => {
-    const user = auth.currentUser;
-    if (!input.trim() || !user || loading) return;
+    const userStr = localStorage.getItem('counseling_currentUser');
+    if (!input.trim() || !userStr || loading) return;
+    const user = JSON.parse(userStr);
 
     const userMsg = input.trim();
     setInput('');
@@ -84,19 +86,27 @@ const ChatAI = () => {
         timestamp: serverTimestamp()
       });
 
-      // Write alert if negative sentiment detected
+      // Write alert if negative sentiment detected (Fire and forget, do not await to prevent blocking UI)
       if (result.shouldAlert) {
-        await addDoc(collection(db, 'alerts'), {
+        addDoc(collection(db, 'alerts'), {
           studentId: user.uid,
-          studentName: user.displayName || user.email,
-          
-          studentEmail: user.email,
-          message: userMsg,
-          emotion: result.emotion,
-          severity: result.severity,
+          studentName: user.name || user.email || 'Student',
+          studentEmail: user.email || 'No Email',
+          message: userMsg || '',
+          emotion: result.emotion || 'unknown',
+          severity: result.severity || 'unknown',
           timestamp: serverTimestamp(),
           read: false
-        });
+        }).catch(e => console.error("Error logging alert:", e));
+
+        // Send direct notification to Counselor Portal
+        addDoc(collection(db, 'counselorNotifications'), {
+          type: 'alert',
+          text: `Urgent AI Alert: ${result.severity || 'unknown'} severity ${result.emotion || 'unknown'} detected from student ${user.name || user.email || 'Student'}.`,
+          studentId: user.uid,
+          read: false,
+          createdAt: serverTimestamp()
+        }).catch(e => console.error("Error logging notification:", e));
       }
 
     } catch (err) {

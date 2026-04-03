@@ -1,46 +1,70 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import CounselorSidebar from '../components/CounselorSidebar';
-import { Bell, MessageSquare, CalendarCheck, Info, AlertTriangle } from 'lucide-react';
+import TutorSidebar from '../components/TutorSidebar';
+import { Bell, CheckCircle, XCircle, Info } from 'lucide-react';
 import { db } from '../firebaseConfig';
 import {
-    collection, query, orderBy, onSnapshot,
+    collection, query, where, onSnapshot,
     writeBatch, getDocs, doc
 } from 'firebase/firestore';
 
-const Notifications = () => {
+const TutorNotifications = () => {
     const [notifications, setNotifications] = useState([]);
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
 
-    // ── Real-time listener for counselor notifications ──
+    // ── Real-time listener for tutor notifications ──
     useEffect(() => {
+        const userStr = localStorage.getItem('tutor_currentUser');
+        if (!userStr) {
+            navigate('/tutor-login');
+            return;
+        }
+        
+        const user = JSON.parse(userStr);
+        if (!user || !user.uid) return;
+
         const q = query(
-            collection(db, 'counselorNotifications'),
-            orderBy('createdAt', 'desc')
+            collection(db, 'tutorNotifications'),
+            where('tutorId', '==', user.uid)
         );
+
         const unsub = onSnapshot(q, (snapshot) => {
             const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            // Sort locally to prevent requiring a composite index in Firestore
+            data.sort((a, b) => {
+                const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : Date.now();
+                const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : Date.now();
+                return timeB - timeA;
+            });
             setNotifications(data);
             setLoading(false);
         });
+
         return () => unsub();
-    }, []);
+    }, [navigate]);
 
     // ── Clear all notifications ──
     const clearNotifications = async () => {
-        const snapshot = await getDocs(collection(db, 'counselorNotifications'));
+        const userStr = localStorage.getItem('tutor_currentUser');
+        if (!userStr) return;
+        const user = JSON.parse(userStr);
+
+        const q = query(
+            collection(db, 'tutorNotifications'),
+            where('tutorId', '==', user.uid)
+        );
+        const snapshot = await getDocs(q);
         const batch = writeBatch(db);
-        snapshot.docs.forEach(d => batch.delete(doc(db, 'counselorNotifications', d.id)));
+        snapshot.docs.forEach(d => batch.delete(doc(db, 'tutorNotifications', d.id)));
         await batch.commit();
     };
 
     const getIcon = (type) => {
         switch (type) {
-            case 'message': return <MessageSquare size={20} className="text-blue-500" />;
-            case 'slot': return <CalendarCheck size={20} className="text-green-500" />;
-            case 'request': return <Info size={20} className="text-amber-500" />;
-            case 'alert': return <AlertTriangle size={20} className="text-red-600 animate-pulse" />;
+            case 'request_approved': return <CheckCircle size={20} className="text-green-500" />;
+            case 'request_rejected': return <XCircle size={20} className="text-red-500" />;
+            case 'info': return <Info size={20} className="text-blue-500" />;
             default: return <Bell size={20} className="text-primary" />;
         }
     };
@@ -53,12 +77,12 @@ const Notifications = () => {
 
     return (
         <div className="flex min-h-screen bg-background">
-            <CounselorSidebar />
+            <TutorSidebar />
             <main className="flex-1 ml-64 p-8 max-w-5xl">
                 <div className="flex justify-between items-center mb-6">
                     <div>
                         <h1 className="text-3xl font-bold text-gray-800">Notifications</h1>
-                        <p className="text-gray-500 mt-2">Stay updated on student requests and messages.</p>
+                        <p className="text-gray-500 mt-2">Stay updated on the status of your student access requests.</p>
                     </div>
                     {notifications.length > 0 && (
                         <button
@@ -84,32 +108,23 @@ const Notifications = () => {
                             </div>
                         ) : (
                             notifications.map((notif) => {
-                                const isMessage = notif.type === 'message';
+                                const isApproved = notif.type === 'request_approved';
                                 return (
                                     <div
                                         key={notif.id}
-                                        onClick={() => isMessage ? navigate('/counselor-chat') : null}
-                                        className={`bg-card rounded-2xl p-5 border shadow-sm flex items-start space-x-4 transition-all ${
-                                            isMessage ? 'cursor-pointer hover:border-blue-400 hover:shadow-md border-blue-100' : 
-                                            notif.type === 'alert' ? 'border-red-300 bg-red-50/50 hover:shadow-md shadow-red-100/50 text-red-900' :
-                                            'border-gray-100 hover:border-secondary'
-                                        }`}
+                                        onClick={() => isApproved ? navigate('/tutor-dashboard') : null}
+                                        className={`bg-card rounded-2xl p-5 border shadow-sm flex items-start space-x-4 transition-all ${isApproved ? 'cursor-pointer hover:border-green-400 hover:shadow-md border-green-100' : 'border-gray-100 hover:border-secondary'}`}
                                     >
-                                        <div className={`p-3 rounded-full shadow-sm ${notif.type === 'alert' ? 'bg-red-100 shadow-red-200 text-red-600' : 'bg-white'}`}>
+                                        <div className="bg-white p-3 rounded-full shadow-sm">
                                             {getIcon(notif.type)}
                                         </div>
                                         <div className="flex-1">
-                                            <p className={`font-medium text-lg ${notif.type === 'alert' ? 'text-red-800' : 'text-gray-800'}`}>{notif.text}</p>
-                                            <p className={`text-sm mt-1 ${notif.type === 'alert' ? 'text-red-500 font-medium' : 'text-gray-400'}`}>{formatTime(notif.createdAt)}</p>
+                                            <p className="font-medium text-gray-800 text-lg">{notif.text}</p>
+                                            <p className="text-sm text-gray-400 mt-1">{formatTime(notif.createdAt)}</p>
                                         </div>
-                                        {isMessage && (
-                                            <div className="text-blue-500 font-bold text-sm bg-blue-50 px-3 py-1 rounded-lg self-center border border-blue-100">
-                                                Open Chat →
-                                            </div>
-                                        )}
-                                        {notif.type === 'alert' && (
-                                            <div className="text-red-600 font-bold text-xs bg-red-100 px-3 py-1 rounded-lg self-center border border-red-200 flex items-center shadow-sm">
-                                                <AlertTriangle size={12} className="mr-1" /> URGENT
+                                        {isApproved && (
+                                            <div className="text-green-600 font-bold text-sm bg-green-50 px-3 py-1 rounded-lg self-center border border-green-200">
+                                                Go to Dashboard →
                                             </div>
                                         )}
                                     </div>
@@ -123,4 +138,4 @@ const Notifications = () => {
     );
 };
 
-export default Notifications;
+export default TutorNotifications;

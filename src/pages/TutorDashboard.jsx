@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Search, Clock, CheckCircle, XCircle, MessageSquare, LogOut, ArrowRight } from 'lucide-react';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
+import { Search, Clock, CheckCircle, XCircle, MessageSquare, LogOut, ArrowRight, Settings as SettingsIcon } from 'lucide-react';
 import { db } from '../firebaseConfig';
 import { collection, query, where, getDocs, addDoc, serverTimestamp, onSnapshot, orderBy } from 'firebase/firestore';
+import TutorSidebar from '../components/TutorSidebar';
 
 const TutorDashboard = () => {
     const [collegeId, setCollegeId] = useState('');
@@ -11,6 +12,7 @@ const TutorDashboard = () => {
     const [requests, setRequests] = useState([]);
     
     const navigate = useNavigate();
+    const location = useLocation();
     
     // Auth check
     useEffect(() => {
@@ -27,12 +29,17 @@ const TutorDashboard = () => {
 
         const q = query(
             collection(db, 'tutor_requests'),
-            where('tutorId', '==', user.uid),
-            orderBy('timestamp', 'desc')
+            where('tutorId', '==', user.uid)
         );
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const reqData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // Order by timestamp locally to prevent Firebase index errors
+            reqData.sort((a, b) => {
+                const tA = a.timestamp?.toMillis ? a.timestamp.toMillis() : Date.now();
+                const tB = b.timestamp?.toMillis ? b.timestamp.toMillis() : Date.now();
+                return tB - tA; // descending
+            });
             setRequests(reqData);
         });
 
@@ -51,30 +58,29 @@ const TutorDashboard = () => {
         setLoading(true);
 
         try {
-            // Find student by college ID
+            // Find student by college ID (Avoid compound queries to prevent Firebase index errors)
             const usersRef = collection(db, 'users');
-            const q = query(usersRef, where('collegeId', '==', collegeId.trim().toUpperCase()), where('role', '==', 'student'));
+            const trimmedId = collegeId.trim();
+            const upperId = trimmedId.toUpperCase();
+            const searchIds = trimmedId === upperId ? [trimmedId] : [trimmedId, upperId];
+
+            const q = query(usersRef, where('collegeId', 'in', searchIds));
             const querySnapshot = await getDocs(q);
 
-            if (querySnapshot.empty) {
-                // Try case insensitive or exact as entered, just in case
-                const q2 = query(usersRef, where('collegeId', '==', collegeId.trim()), where('role', '==', 'student'));
-                const querySnapshot2 = await getDocs(q2);
-                
-                if (querySnapshot2.empty) {
-                     setMessage({ type: 'error', text: 'No student found with that College ID.' });
-                     setLoading(false);
-                     return;
-                } else {
-                    await processRequest(querySnapshot2.docs[0]);
-                }
+            // Filter for student role locally
+            const studentDocs = querySnapshot.docs.filter(d => d.data().role === 'student');
+
+            if (studentDocs.length === 0) {
+                 setMessage({ type: 'error', text: 'No such student record' });
+                 setLoading(false);
+                 return;
             } else {
-                await processRequest(querySnapshot.docs[0]);
+                await processRequest(studentDocs[0]);
             }
 
         } catch (error) {
             console.error("Error requesting access:", error);
-            setMessage({ type: 'error', text: 'An error occurred while requesting access.' });
+            setMessage({ type: 'error', text: `Error: ${error.message || 'Failed to request access.'}` });
         } finally {
             setLoading(false);
         }
@@ -84,33 +90,40 @@ const TutorDashboard = () => {
         const studentData = studentDoc.data();
         const studentId = studentDoc.id;
 
-        // Check if request already exists
+        // Check if a pending request already exists
         const existingReqs = requests.filter(r => r.studentId === studentId);
         if (existingReqs.length > 0) {
             const latest = existingReqs[0];
             if (latest.status === 'pending') {
                 setMessage({ type: 'error', text: 'You already have a pending request for this student.' });
                 return;
-            } else if (latest.status === 'approved') {
-                setMessage({ type: 'error', text: 'You already have approved access to this student.' });
-                return;
             }
-            // If rejected, allow re-requesting
+            // If the latest request is approved, they are allowed to request again to update their view timeline
         }
 
         // Create new request
         await addDoc(collection(db, 'tutor_requests'), {
-            tutorId: user.uid,
-            tutorName: user.name || 'Tutor',
-            tutorEmail: user.email,
-            studentId: studentId,
-            studentName: studentData.name,
-            collegeId: studentData.collegeId,
+            tutorId: user.uid || 'unknown_tutor_id',
+            tutorName: user.name || user.fullName || 'Tutor',
+            tutorEmail: user.email || 'unknown@example.com',
+            studentId: studentId || 'unknown_student_id',
+            studentName: studentData?.name || studentData?.fullName || 'Student',
+            collegeId: studentData?.collegeId || 'unknown_college_id',
             status: 'pending',
             timestamp: serverTimestamp()
         });
 
-        setMessage({ type: 'success', text: `Access request sent for ${studentData.name} (${studentData.collegeId}).` });
+        // Notify Counselor about the request
+        await addDoc(collection(db, 'counselorNotifications'), {
+            text: `Tutor ${user.name || user.fullName || 'Tutor'} requested access to student ${studentData?.name || studentData?.fullName || 'Student'} (${studentData?.collegeId || 'ID'})`,
+            type: 'tutor_request',
+            tutorEmail: user.email || 'unknown@example.com',
+            studentEmail: studentData?.email || 'unknown@example.com',
+            read: false,
+            createdAt: serverTimestamp()
+        });
+
+        setMessage({ type: 'success', text: `Access request sent for ${studentData?.name || 'Student'} (${studentData?.collegeId || 'ID'}).` });
         setCollegeId('');
     };
 
@@ -129,42 +142,12 @@ const TutorDashboard = () => {
     };
 
     return (
-        <div className="min-h-screen bg-background flex flex-col md:flex-row">
+        <div className="flex min-h-screen bg-background">
             {/* Sidebar */}
-            <aside className="w-full md:w-64 bg-card border-b md:border-r border-gray-200 p-6 flex flex-col">
-                <div className="flex items-center mb-10">
-                    <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary mr-3">
-                        <span className="font-bold text-xl">T</span>
-                    </div>
-                    <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary">
-                        Tutor Portal
-                    </span>
-                </div>
-
-                <nav className="flex-1 space-y-2">
-                    <div className="flex items-center px-4 py-3 bg-primary/10 text-primary rounded-xl font-medium">
-                        <MessageSquare className="mr-3" size={20} />
-                        Dashboard
-                    </div>
-                </nav>
-
-                <div className="mt-auto pt-6 border-t border-gray-100">
-                    <div className="mb-4 px-4">
-                        <p className="text-sm font-medium text-gray-800 truncate">{user.name}</p>
-                        <p className="text-xs text-gray-500 truncate">{user.email}</p>
-                    </div>
-                    <button 
-                        onClick={handleLogout}
-                        className="flex items-center w-full px-4 py-3 text-red-600 hover:bg-red-50 rounded-xl transition-colors font-medium"
-                    >
-                        <LogOut className="mr-3" size={20} />
-                        Logout
-                    </button>
-                </div>
-            </aside>
+            <TutorSidebar />
 
             {/* Main Content */}
-            <main className="flex-1 p-8 overflow-y-auto">
+            <main className="flex-1 ml-64 p-8 overflow-y-auto w-full">
                 <header className="mb-8">
                     <h1 className="text-3xl font-bold text-gray-800">Tutor Dashboard</h1>
                     <p className="text-gray-500 mt-2">Request access to student chats and view your approvals.</p>

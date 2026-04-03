@@ -17,6 +17,8 @@ import TutorLogin from "./pages/TutorLogin";
 import TutorDashboard from "./pages/TutorDashboard";
 import TutorChat from "./pages/TutorChat";
 import CounselorTutorRequests from "./pages/CounselorTutorRequests";
+import TutorSettings from "./pages/TutorSettings";
+import TutorNotifications from "./pages/TutorNotifications";
 
 function App() {
   return (
@@ -46,6 +48,8 @@ function App() {
           <Route path="/tutor-login" element={<TutorLogin />} />
           <Route path="/tutor-dashboard" element={<TutorDashboard />} />
           <Route path="/tutor-chat" element={<TutorChat />} />
+          <Route path="/tutor-settings" element={<TutorSettings />} />
+          <Route path="/tutor-notifications" element={<TutorNotifications />} />
           
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

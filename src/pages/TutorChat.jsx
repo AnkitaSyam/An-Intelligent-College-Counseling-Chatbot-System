@@ -21,6 +21,7 @@ const TutorChat = () => {
     const [hasAccess, setHasAccess] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [approvedAt, setApprovedAt] = useState(null);
     
     const messagesEndRef = useRef(null);
 
@@ -44,21 +45,34 @@ const TutorChat = () => {
 
     const checkAccess = async (tutorUid, studentUid) => {
         try {
-            // Verify APPROVED request exists
+            // Verify APPROVED request exists (Avoid multi-field composite index errors)
             const q = query(
                 collection(db, 'tutor_requests'),
-                where('tutorId', '==', tutorUid),
-                where('studentId', '==', studentUid),
-                where('status', '==', 'approved')
+                where('tutorId', '==', tutorUid)
             );
             
             const querySnapshot = await getDocs(q);
             
-            if (querySnapshot.empty) {
+            const approvedReqs = querySnapshot.docs.filter(d => 
+                d.data().studentId === studentUid && d.data().status === 'approved'
+            );
+            
+            if (approvedReqs.length === 0) {
                 setError('You do not have approved access to view this student\'s records.');
                 setHasAccess(false);
             } else {
                 setHasAccess(true);
+                
+                // If there are multiple requests, we find the one MOST RECENTLY approved
+                approvedReqs.sort((a, b) => {
+                    const timeA = a.data().updatedAt?.toMillis ? a.data().updatedAt.toMillis() : 0;
+                    const timeB = b.data().updatedAt?.toMillis ? b.data().updatedAt.toMillis() : 0;
+                    return timeB - timeA; // Descending
+                });
+                
+                const latestApprovedReq = approvedReqs[0];
+                setApprovedAt(latestApprovedReq.data().updatedAt);
+                
                 // Load student details
                 const studentDoc = await getDoc(doc(db, 'users', studentUid));
                 if (studentDoc.exists()) {
@@ -67,7 +81,7 @@ const TutorChat = () => {
             }
         } catch (err) {
             console.error("Error checking access permissions:", err);
-            setError('Failed to verify access permissions.');
+            setError(`Failed to verify access permissions. ${err.message}`);
         } finally {
             setLoading(false);
         }
@@ -84,7 +98,17 @@ const TutorChat = () => {
         );
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const msgs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            let msgs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            
+            // Filter messages to only show history from before the request was accepted
+            if (approvedAt) {
+                const cutoff = approvedAt.toMillis ? approvedAt.toMillis() : Date.now();
+                msgs = msgs.filter(m => {
+                    const msgTime = m.createdAt?.toMillis ? m.createdAt.toMillis() : Date.now();
+                    return msgTime <= cutoff;
+                });
+            }
+            
             setMessages(msgs);
             setTimeout(() => {
                 messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -92,7 +116,7 @@ const TutorChat = () => {
         });
 
         return () => unsubscribe();
-    }, [hasAccess, studentId]);
+    }, [hasAccess, studentId, approvedAt]);
 
     if (loading) {
         return (
@@ -160,8 +184,8 @@ const TutorChat = () => {
                 <div className="bg-blue-50 border border-blue-100 text-blue-800 rounded-xl p-4 mb-6 text-sm flex items-start shadow-sm">
                     <Lock className="shrink-0 mr-3 mt-0.5 text-blue-500" size={18} />
                     <div>
-                        <p className="font-semibold mb-1">Privacy Notice</p>
-                        <p>You have been granted restricted, read-only access to this student's history. Interaction is disabled to comply with privacy protocols. You cannot reply, edit, or download these messages.</p>
+                        <p className="font-semibold mb-1">Historical Record</p>
+                        <p>You have been granted restricted, read-only access to this student's history up until the moment your request was approved. Interaction is disabled to comply with privacy protocols.</p>
                     </div>
                 </div>
 
@@ -184,20 +208,28 @@ const TutorChat = () => {
                             <div className="space-y-6">
                                 {messages.map((message) => {
                                     const isStudent = message.sender === 'student';
+                                    const isSystem = message.sender === 'system';
+                                    const isTutor = message.sender === 'tutor';
+                                    
                                     return (
-                                        <div key={message.id} className={`flex flex-col ${isStudent ? 'items-start' : 'items-end'}`}>
-                                            <span className="text-xs text-gray-400 mb-1 ml-2 mr-2 font-medium">
-                                                {isStudent ? (studentData?.name || 'Student') : 'Counselor'}
-                                            </span>
-                                            <div className={`max-w-[80%] rounded-2xl p-4 shadow-sm ${
+                                        <div key={message.id} className={`flex flex-col ${isSystem ? 'items-center' : isStudent ? 'items-start' : 'items-end'}`}>
+                                            {!isSystem && (
+                                                <span className="text-xs text-gray-400 mb-1 ml-2 mr-2 font-medium">
+                                                    {isStudent ? (studentData?.name || 'Student') : isTutor ? 'You (Tutor)' : 'Counselor'}
+                                                </span>
+                                            )}
+                                            <div className={`rounded-2xl p-4 shadow-sm ${
+                                                isSystem ? 'bg-gray-100 text-gray-500 text-xs px-4 py-2 rounded-full max-w-[90%] text-center' :
                                                 isStudent 
-                                                    ? 'bg-white border border-gray-200 text-gray-800 rounded-tl-sm'
-                                                    : 'bg-primary/10 border border-primary/20 text-gray-800 rounded-br-sm'
+                                                    ? 'max-w-[80%] bg-white border border-gray-200 text-gray-800 rounded-tl-sm'
+                                                    : 'max-w-[80%] bg-primary/10 border border-primary/20 text-gray-800 rounded-br-sm'
                                                 }`}>
                                                 <p className="text-[15px] leading-relaxed whitespace-pre-wrap">{message.text}</p>
-                                                <span className={`text-[10px] block mt-2 ${isStudent ? 'text-gray-400 text-left' : 'text-gray-500 text-right'}`}>
-                                                    {formatTimestamp(message.createdAt)}
-                                                </span>
+                                                {!isSystem && (
+                                                    <span className={`text-[10px] block mt-2 ${isStudent ? 'text-gray-400 text-left' : 'text-gray-500 text-right'}`}>
+                                                        {formatTimestamp(message.createdAt)}
+                                                    </span>
+                                                )}
                                             </div>
                                         </div>
                                     );
@@ -207,11 +239,11 @@ const TutorChat = () => {
                         )}
                     </div>
                     
-                    {/* Read-only notification banner (replaces input) */}
+                    {/* Read-only notification banner */}
                     <div className="bg-gray-100 p-4 text-center border-t border-gray-200">
                         <p className="text-xs text-gray-500 flex items-center justify-center font-medium">
                             <Lock size={12} className="mr-1.5" />
-                            Messaging is disabled in read-only mode
+                            Messaging is disabled in historical mode
                         </p>
                     </div>
                 </div>

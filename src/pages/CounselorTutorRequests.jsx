@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Search, Check, X, Clock, AlertCircle } from 'lucide-react';
+import { Shield, Search, Check, X, Clock, AlertCircle, ShieldCheck, UserPlus, CheckCircle2 } from 'lucide-react';
 import { db } from '../firebaseConfig';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, addDoc, getDocs, where } from 'firebase/firestore';
 import CounselorSidebar from '../components/CounselorSidebar';
 
 const CounselorTutorRequests = () => {
@@ -11,6 +11,12 @@ const CounselorTutorRequests = () => {
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [filter, setFilter] = useState('pending'); // 'all', 'pending', 'approved', 'rejected'
+
+    // Manual access fields
+    const [tutorEmail, setTutorEmail] = useState('');
+    const [studentName, setStudentName] = useState('');
+    const [successMsg, setSuccessMsg] = useState('');
+    const [grantLoading, setGrantLoading] = useState(false);
 
     useEffect(() => {
         const user = localStorage.getItem('counselor_currentUser');
@@ -36,14 +42,95 @@ const CounselorTutorRequests = () => {
 
     const handleUpdateStatus = async (requestId, newStatus) => {
         try {
+            const reqData = requests.find(r => r.id === requestId);
             const requestRef = doc(db, 'tutor_requests', requestId);
             await updateDoc(requestRef, {
                 status: newStatus,
                 updatedAt: serverTimestamp()
             });
+
+            if (reqData && (newStatus === 'approved' || newStatus === 'rejected')) {
+                await addDoc(collection(db, 'tutorNotifications'), {
+                    tutorId: reqData.tutorId,
+                    type: newStatus === 'approved' ? 'request_approved' : 'request_rejected',
+                    text: `Your request to access student ${reqData.studentName} (${reqData.collegeId}) was ${newStatus}.`,
+                    read: false,
+                    createdAt: serverTimestamp()
+                });
+            }
         } catch (error) {
             console.error("Error updating request status:", error);
             alert("Failed to update status. Please try again.");
+        }
+    };
+
+    const handleGrantAccess = async (e) => {
+        e.preventDefault();
+        setGrantLoading(true);
+
+        try {
+            // Find Tutor Document
+            const tutorQ = query(collection(db, 'users'), where('email', '==', tutorEmail));
+            const tutorSnap = await getDocs(tutorQ);
+            
+            if (tutorSnap.empty) {
+                alert("Could not find a Tutor account with that email address.");
+                setGrantLoading(false);
+                return;
+            }
+            const tutorDoc = tutorSnap.docs[0];
+            const tutorData = tutorDoc.data();
+
+            // Find Student Document
+            const studentQ1 = query(collection(db, 'users'), where('name', '==', studentName));
+            let studentSnap = await getDocs(studentQ1);
+            
+            // Fallback search by collegeId if exactly formatted
+            if (studentSnap.empty) {
+                const studentQ2 = query(collection(db, 'users'), where('collegeId', '==', studentName));
+                studentSnap = await getDocs(studentQ2);
+            }
+            
+            if (studentSnap.empty) {
+                alert("Could not find a Student account matching that Name or ID.");
+                setGrantLoading(false);
+                return;
+            }
+            const studentDoc = studentSnap.docs[0];
+            const studentDataObj = studentDoc.data();
+
+            // Store standardized valid request
+            await addDoc(collection(db, 'tutor_requests'), {
+                tutorId: tutorDoc.id,
+                tutorName: tutorData.name || tutorData.fullName || 'Tutor',
+                tutorEmail: tutorData.email,
+                studentId: studentDoc.id,
+                studentName: studentDataObj.name || studentDataObj.fullName || 'Student',
+                collegeId: studentDataObj.collegeId || 'N/A',
+                status: 'approved',
+                timestamp: serverTimestamp(),
+                updatedAt: serverTimestamp() // Locks in chat history
+            });
+
+            // Send notification
+            await addDoc(collection(db, 'tutorNotifications'), {
+                tutorId: tutorDoc.id,
+                type: 'request_approved',
+                text: `Counselor manually granted you secure access to student ${studentDataObj.name || 'Student'}.`,
+                read: false,
+                createdAt: serverTimestamp()
+            });
+
+            setSuccessMsg(`Access successfully granted securely. ${tutorData.name || 'The tutor'} has been notified.`);
+            setTutorEmail('');
+            setStudentName('');
+
+            setTimeout(() => setSuccessMsg(''), 4000);
+        } catch (error) {
+            console.error('Error granting access:', error);
+            alert('Failed to grant access. Please try again.');
+        } finally {
+            setGrantLoading(false);
         }
     };
 
@@ -86,6 +173,62 @@ const CounselorTutorRequests = () => {
                         <p className="text-gray-500 mt-2">Manage tutor requests to view student chat histories.</p>
                     </div>
                 </header>
+
+                <div className="bg-card rounded-2xl p-6 shadow-md border border-gray-100 mb-8">
+                    <div className="flex items-center space-x-3 mb-6 pb-4 border-b border-gray-100">
+                        <div className="p-2 bg-primary/10 text-primary rounded-lg">
+                            <ShieldCheck size={24} />
+                        </div>
+                        <h2 className="text-xl font-bold text-gray-800">Tutor Access Control</h2>
+                    </div>
+
+                    <p className="text-gray-600 mb-6">
+                        Grant a tutor access to a specific student's details and chat history.
+                        The tutor will only be able to view information related to the assigned student.
+                    </p>
+
+                    {successMsg && (
+                        <div className="bg-green-50 text-green-700 p-4 rounded-xl mb-6 flex items-start space-x-3 border border-green-100">
+                            <CheckCircle2 size={20} className="mt-0.5 flex-shrink-0" />
+                            <p className="font-medium">{successMsg}</p>
+                        </div>
+                    )}
+
+                    <form onSubmit={handleGrantAccess} className="space-y-6 max-w-xl">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Tutor Email</label>
+                            <input
+                                type="email"
+                                required
+                                value={tutorEmail}
+                                onChange={(e) => setTutorEmail(e.target.value)}
+                                className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
+                                placeholder="Enter tutor's email address"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Student Name (or ID)</label>
+                            <input
+                                type="text"
+                                required
+                                value={studentName}
+                                onChange={(e) => setStudentName(e.target.value)}
+                                className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary transition-colors bg-white/50"
+                                placeholder="E.g., Sarah Williams OR CS2024-001"
+                            />
+                        </div>
+
+                        <button
+                            type="submit"
+                            disabled={grantLoading}
+                            className="bg-primary hover:bg-secondary text-white hover:text-primary font-medium py-3 px-6 rounded-lg transition-colors shadow-lg shadow-primary/30 flex items-center space-x-2 disabled:opacity-60"
+                        >
+                            <UserPlus size={20} />
+                            <span>{grantLoading ? 'Saving...' : 'Grant Tutor Access'}</span>
+                        </button>
+                    </form>
+                </div>
 
                 <div className="bg-card rounded-2xl shadow-md border border-gray-100 overflow-hidden">
                     {/* Controls */}

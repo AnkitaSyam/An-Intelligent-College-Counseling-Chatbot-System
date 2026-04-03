@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import Sidebar from '../components/Sidebar';
-import { User, Phone, Lock, Save, CheckCircle2 } from 'lucide-react';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
+import { User, Phone, Lock, Save, CheckCircle2, MessageSquare, LogOut, Settings as SettingsIcon } from 'lucide-react';
 import { auth, db } from '../firebaseConfig';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { updatePassword, onAuthStateChanged } from 'firebase/auth';
+import { updatePassword } from 'firebase/auth';
+import TutorSidebar from '../components/TutorSidebar';
 
-const Profile = () => {
-    const [studentData, setStudentData] = useState({ name: '', email: '', phone: '', collegeId: '', uid: '' });
+const TutorSettings = () => {
+    const navigate = useNavigate();
+    const location = useLocation();
+
+    const [tutorData, setTutorData] = useState({ name: '', email: '', phone: '', uid: '' });
     const [phone, setPhone] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -16,20 +20,26 @@ const Profile = () => {
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
-        const localUserStr = localStorage.getItem('counseling_currentUser');
+        const localUserStr = localStorage.getItem('tutor_currentUser');
         if (localUserStr) {
             const localUser = JSON.parse(localUserStr);
-            setStudentData({
+            setTutorData({
                 uid: localUser.uid,
-                name: localUser.name || localUser.fullName || 'Student',
+                name: localUser.name || localUser.fullName || 'Tutor',
                 email: localUser.email,
-                phone: localUser.phone || '',
-                collegeId: localUser.collegeId || ''
+                phone: localUser.phone || ''
             });
             setPhone(localUser.phone || '');
+        } else {
+            navigate('/tutor-login');
         }
         setLoading(false);
-    }, []);
+    }, [navigate]);
+
+    const handleLogout = () => {
+        localStorage.removeItem('tutor_currentUser');
+        navigate('/tutor-login');
+    };
 
     const handleSaveProfile = async (e) => {
         e.preventDefault();
@@ -45,39 +55,39 @@ const Profile = () => {
 
         try {
             // Update Phone in Firestore and LocalStorage
-            if (phone !== studentData.phone) {
-                await updateDoc(doc(db, 'users', studentData.uid), { phone });
+            if (phone !== tutorData.phone) {
+                await updateDoc(doc(db, 'users', tutorData.uid), { phone });
                 
-                const localUserStr = localStorage.getItem('counseling_currentUser');
+                const localUserStr = localStorage.getItem('tutor_currentUser');
                 if (localUserStr) {
                     const localUser = JSON.parse(localUserStr);
                     localUser.phone = phone;
-                    localStorage.setItem('counseling_currentUser', JSON.stringify(localUser));
+                    localStorage.setItem('tutor_currentUser', JSON.stringify(localUser));
                 }
                 
-                setStudentData(prev => ({ ...prev, phone }));
+                setTutorData(prev => ({ ...prev, phone }));
             }
 
             // Update Password in Firebase Auth
             if (newPassword) {
                 const user = auth.currentUser;
-                // Verify the globally authenticated user matches the student session
-                if (!user || user.uid !== studentData.uid) {
-                    throw new Error("Session conflict (you might be logged in as another role in another tab). Please fully log out and log back in to change your password.");
+                // Verify the globally authenticated user matches the tutor session
+                if (!user || user.uid !== tutorData.uid) {
+                    throw new Error("Session conflict (you might be logged in as a student in another tab). Please fully log out and log back in to change your password.");
                 }
                 await updatePassword(user, newPassword);
                 setNewPassword('');
                 setConfirmPassword('');
             }
 
-            setSuccessMsg("Settings updated successfully.");
+            setSuccessMsg("Profile settings updated successfully.");
             setTimeout(() => setSuccessMsg(''), 4000);
         } catch (error) {
             console.error('Error updating profile:', error);
             if (error.code === 'auth/requires-recent-login') {
                 setErrorMsg("For security reasons, please log out and log back in to change your password.");
             } else {
-                setErrorMsg(error.message || 'Failed to update settings.');
+                setErrorMsg(error.message || 'Failed to update profile.');
             }
         } finally {
             setSaving(false);
@@ -86,22 +96,23 @@ const Profile = () => {
 
     if (loading) {
         return (
-            <div className="flex min-h-screen bg-background">
-                <Sidebar />
-                <main className="flex-1 ml-64 flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                </main>
+            <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
+                <p className="text-gray-500">Loading settings...</p>
             </div>
         );
     }
 
     return (
         <div className="flex min-h-screen bg-background">
-            <Sidebar />
-            <main className="flex-1 ml-64 p-8 max-w-4xl">
+            {/* Sidebar (Duplicated from TutorDashboard for standalone routing) */}
+            <TutorSidebar />
+
+            {/* Main Content */}
+            <main className="flex-1 ml-64 p-8 overflow-y-auto w-full max-w-4xl">
                 <header className="mb-8">
                     <h1 className="text-3xl font-bold text-gray-800">Account Settings</h1>
-                    <p className="text-gray-500 mt-2">Manage your personal details and security configurations.</p>
+                    <p className="text-gray-500 mt-2">Manage your personal profile and security configurations.</p>
                 </header>
 
                 <div className="bg-card rounded-2xl p-6 shadow-md border border-gray-100 mb-8">
@@ -133,29 +144,19 @@ const Profile = () => {
                                 <input
                                     type="text"
                                     readOnly
-                                    value={studentData.name}
+                                    value={tutorData.name}
                                     className="w-full px-4 py-3 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed"
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">College ID</label>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
                                 <input
-                                    type="text"
+                                    type="email"
                                     readOnly
-                                    value={studentData.collegeId}
-                                    className="w-full px-4 py-3 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed font-mono"
+                                    value={tutorData.email}
+                                    className="w-full px-4 py-3 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed"
                                 />
                             </div>
-                        </div>
-
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
-                            <input
-                                type="email"
-                                readOnly
-                                value={studentData.email}
-                                className="w-full px-4 py-3 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed"
-                            />
                         </div>
 
                         <div>
@@ -208,7 +209,7 @@ const Profile = () => {
                             className="bg-primary hover:bg-secondary text-white hover:text-primary font-medium py-3 px-6 rounded-lg transition-colors shadow-lg shadow-primary/30 flex items-center space-x-2 disabled:opacity-60 mt-4"
                         >
                             <Save size={20} />
-                            <span>{saving ? 'Saving Changes...' : 'Save Settings'}</span>
+                            <span>{saving ? 'Saving Changes...' : 'Save Profile Settings'}</span>
                         </button>
                     </form>
                 </div>
@@ -217,4 +218,4 @@ const Profile = () => {
     );
 };
 
-export default Profile;
+export default TutorSettings;

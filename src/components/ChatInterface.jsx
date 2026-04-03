@@ -68,8 +68,13 @@ const ChatInterface = ({ student }) => {
         try {
             const now = new Date();
             const slotDate = new Date(`${chatMetadata.approvedSlot.date}T${chatMetadata.approvedSlot.time}`);
-            const ONE_HOUR = 60 * 60 * 1000;
-            return now >= slotDate && now <= new Date(slotDate.getTime() + ONE_HOUR);
+            
+            let endSlotDate = new Date(slotDate.getTime() + 60 * 60 * 1000); 
+            if (chatMetadata.approvedSlot.endTime) {
+                endSlotDate = new Date(`${chatMetadata.approvedSlot.date}T${chatMetadata.approvedSlot.endTime}`);
+            }
+
+            return now >= slotDate && now <= endSlotDate;
         } catch (e) {
             return false;
         }
@@ -207,7 +212,7 @@ const ChatInterface = ({ student }) => {
                     {messages.map((message) => (
                         <div key={message.id} className={`flex flex-col ${message.sender === 'counselor' ? 'items-end' : 'items-start'}`}>
                             <span className="text-xs text-gray-400 mb-1 ml-1 mr-1">
-                                {message.sender === 'counselor' ? 'You' : (student.name || student.email)}
+                                {message.sender === 'counselor' ? 'You' : message.sender === 'tutor' ? `Tutor (${message.senderName || 'Tutor'})` : (student.name || student.email)}
                             </span>
                             <div className={`max-w-[75%] rounded-2xl p-3 shadow-sm ${message.sender === 'counselor'
                                 ? 'bg-primary text-white rounded-br-sm'
@@ -225,21 +230,14 @@ const ChatInterface = ({ student }) => {
 
             {/* Input */}
             <div className="bg-card p-3 border-t border-gray-200/50 flex flex-col">
-                {!canChat && (
-                    <div className="text-center text-xs text-amber-600 mb-2 font-medium">
-                        {isSlotApproved 
-                            ? `Chat will be available on ${chatMetadata.approvedSlot.date} at ${chatMetadata.approvedSlot.time} for 1 hour.` 
-                            : `You must approve a slot before chatting.`}
-                    </div>
-                )}
                 <form onSubmit={handleSend} className="flex items-center space-x-2">
                     <input
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
+                        placeholder={canChat ? "Type a message..." : "Chat is only available during the allotted time slot"}
                         disabled={!canChat}
-                        placeholder={canChat ? "Type a message..." : "Chat restricted..."}
-                        className="flex-1 bg-background border border-gray-200 text-gray-800 px-4 py-2 rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:bg-white transition-all text-[14px] disabled:opacity-60 disabled:bg-gray-50"
+                        className="flex-1 bg-background border border-gray-200 text-gray-800 px-4 py-2 rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:bg-white transition-all text-[14px] disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
                     />
                     <button
                         type="submit"
