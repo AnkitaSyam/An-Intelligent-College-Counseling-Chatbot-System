@@ -19,7 +19,7 @@ By combining continuous AI availability with structured professional interventio
 ### 1. The Student Portal
 Developed to provide secure access to mental health resources and tracking.
 
-![Student Portal Dashboard](C:\Users\USER\Downloads\final\public\student-portal.png)
+![Student Portal Dashboard](public\student-portal.png)
 
 - **AI Counselor:** Integrated with the Groq API, the system offers continuous conversational support. The architecture supports a multi-session interface, allowing students to maintain and review distinct historical interactions.
 - **Counseling Appointments:** Students can view counselor availability, request specific appointment times, and engage in encrypted, real-time messaging during approved slot intervals.
@@ -29,7 +29,6 @@ Developed to provide secure access to mental health resources and tracking.
 ### 2. The Counselor Portal
 Engineered for efficient student management and analytical oversight.
 
-*(Add your screenshot here)*
 ![Counselor Portal Dashboard](C:\Users\USER\Downloads\final\public\counselor-portal.png)
 
 - **Slot Management:** Counselors establish availability parameters. The system automatically processes and prunes expired time slots to maintain database integrity and accurate scheduling records.
@@ -39,7 +38,6 @@ Engineered for efficient student management and analytical oversight.
 ### 3. The Tutor Portal
 Designed for structured pastoral oversight, strictly adhering to privacy protocols.
 
-*(Add your screenshot here)*
 ![Tutor Portal Dashboard](C:\Users\USER\Downloads\final\public\tutor-portal.png)
 
 - **Authentic Access Requests:** Tutors submit formal requests (via Student College ID) to the counselor for authorization to review a specific student's counseling records.
