@@ -7,6 +7,9 @@ const AIChatSummary = () => {
   const [students, setStudents] = useState([]);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [chatHistory, setChatHistory] = useState([]);
+  const [chatSessions, setChatSessions] = useState([]);
+  const [selectedSession, setSelectedSession] = useState(null);
+  const [sessionMessages, setSessionMessages] = useState([]);
   const [loading, setLoading] = useState(false);
 
   // Load all students from Firestore
@@ -21,22 +24,61 @@ const AIChatSummary = () => {
     fetchStudents();
   }, []);
 
-  // Load chat history for selected student
+  // Load chat sessions for selected student
   const loadChat = async (student) => {
     setSelectedStudent(student);
+    setSelectedSession(null);
     setLoading(true);
-    setChatHistory([]);
+    setChatSessions([]);
     try {
-      const q = query(
-        collection(db, 'aiChats', student.id, 'messages'),
-        orderBy('timestamp', 'asc')
-      );
-      const snapshot = await getDocs(q);
-      setChatHistory(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      const sessionsSnap = await getDocs(collection(db, 'aiChats', student.id, 'sessions'));
+      let sessionsList = sessionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data(), type: 'session' }));
+
+      const legacySnap = await getDocs(collection(db, 'aiChats', student.id, 'messages'));
+      if (!legacySnap.empty) {
+         sessionsList.push({ id: 'legacy', title: 'Legacy Chat Archive', type: 'legacy', updatedAt: null });
+      }
+
+      sessionsList.sort((a, b) => {
+          const tA = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
+          const tB = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
+          return tB - tA;
+      });
+
+      setChatSessions(sessionsList);
     } catch (err) {
       console.error('Error loading chat:', err);
     }
     setLoading(false);
+  };
+
+  const loadSessionMessages = async (session) => {
+      setSelectedSession(session);
+      setLoading(true);
+      try {
+          if (session.type === 'legacy') {
+              const legacySnap = await getDocs(collection(db, 'aiChats', selectedStudent.id, 'messages'));
+              const msgs = legacySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              msgs.sort((a, b) => {
+                  const tA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (new Date(a.timestamp).getTime() || 0);
+                  const tB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (new Date(b.timestamp).getTime() || 0);
+                  return tA - tB;
+              });
+              setSessionMessages(msgs);
+          } else {
+              const msgSnap = await getDocs(collection(db, 'aiChats', selectedStudent.id, 'sessions', session.id, 'messages'));
+              const msgs = msgSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              msgs.sort((a, b) => {
+                  const tA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (new Date(a.timestamp).getTime() || 0);
+                  const tB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (new Date(b.timestamp).getTime() || 0);
+                  return tA - tB;
+              });
+              setSessionMessages(msgs);
+          }
+      } catch (err) {
+          console.error('Error loading messages:', err);
+      }
+      setLoading(false);
   };
 
   return (
@@ -86,43 +128,83 @@ const AIChatSummary = () => {
           <div className="flex-1 h-full bg-card rounded-2xl shadow-md border border-gray-100 flex flex-col overflow-hidden">
             {selectedStudent ? (
               <>
-                <div className="p-4 border-b border-gray-100 bg-gray-50 flex items-center space-x-3">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white font-bold">
-                    {(selectedStudent.name || selectedStudent.email).charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-gray-800">{selectedStudent.name || 'Unknown'}</h3>
-                    <p className="text-xs text-gray-500">AI Chat History</p>
+                <div className="p-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    {selectedSession && (
+                        <button onClick={() => setSelectedSession(null)} className="mr-2 p-1 bg-white rounded-full text-gray-500 hover:text-gray-800 shadow-sm border border-gray-200">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+                        </button>
+                    )}
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white font-bold">
+                      {(selectedStudent.name || selectedStudent.email).charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-gray-800">{selectedStudent.name || 'Unknown'}</h3>
+                      <p className="text-xs text-gray-500">{selectedSession ? (selectedSession.title || 'Chat Thread') : 'AI Chat History'}</p>
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                  {loading && <p className="text-center text-gray-400">Loading chat...</p>}
+                <div className="flex-1 overflow-y-auto p-6 bg-gray-50/50">
+                  {loading && <p className="text-center text-gray-400 mt-10">Loading...</p>}
 
-                  {!loading && chatHistory.length === 0 && (
-                    <div className="text-center text-gray-400 mt-10">
-                      No messages yet for this student.
-                    </div>
+                  {!loading && !selectedSession && (
+                      <div className="space-y-3 max-w-2xl mx-auto">
+                          <h4 className="font-semibold text-gray-700 mb-4 px-2">Select a Chat Session</h4>
+                          {chatSessions.length === 0 ? (
+                              <div className="text-center text-gray-400 mt-10">No sessions found.</div>
+                          ) : (
+                              chatSessions.map(session => (
+                                  <div 
+                                      key={session.id} 
+                                      onClick={() => loadSessionMessages(session)}
+                                      className="bg-white border border-gray-200 p-4 rounded-xl shadow-sm hover:shadow-md hover:border-primary/50 cursor-pointer transition-all flex items-center justify-between"
+                                  >
+                                      <div>
+                                          <h5 className="font-semibold text-gray-800">{session.title || 'Chat Session'}</h5>
+                                          <p className="text-sm text-gray-500 mt-1 flex flex-col">
+                                              <span>{session.firstMessage || 'No preview available'}</span>
+                                              {session.updatedAt && (
+                                                <span className="text-xs text-gray-400 mt-1">
+                                                    Last active: {session.updatedAt.toDate ? session.updatedAt.toDate().toLocaleString() : new Date(session.updatedAt).toLocaleString()}
+                                                </span>
+                                              )}
+                                          </p>
+                                      </div>
+                                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400"><path d="M9 18l6-6-6-6"/></svg>
+                                  </div>
+                              ))
+                          )}
+                      </div>
                   )}
 
-                  {chatHistory.map(msg => (
-                    <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[75%] px-4 py-3 rounded-2xl text-sm ${
-                        msg.sender === 'user'
-                          ? 'bg-primary text-white rounded-tr-none'
-                          : 'bg-gray-100 text-gray-800 rounded-tl-none'
-                      }`}>
-                        <p>{msg.text}</p>
-                        <span className={`text-[10px] block mt-1 text-right ${msg.sender === 'user' ? 'text-blue-100' : 'text-gray-400'}`}>
-                          {msg.timestamp?.toDate
-                            ? msg.timestamp.toDate().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-                            : (typeof msg.timestamp === 'string' || typeof msg.timestamp === 'number'
-                               ? new Date(msg.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-                               : '')}
-                        </span>
+                  {!loading && selectedSession && (
+                      <div className="space-y-4">
+                          {sessionMessages.length === 0 ? (
+                            <div className="text-center text-gray-400 mt-10">No messages in this session.</div>
+                          ) : (
+                              sessionMessages.map(msg => (
+                                <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                  <div className={`max-w-[75%] px-4 py-3 rounded-2xl text-[15px] ${
+                                    msg.sender === 'user'
+                                      ? 'bg-primary text-white rounded-tr-none'
+                                      : 'bg-white border border-gray-200 text-gray-800 rounded-tl-none shadow-sm'
+                                  }`}>
+                                    <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                                    <span className={`text-[10px] block mt-2 text-right ${msg.sender === 'user' ? 'text-blue-100' : 'text-gray-400'}`}>
+                                      {msg.timestamp?.toDate
+                                        ? msg.timestamp.toDate().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                                        : (typeof msg.timestamp === 'string' || typeof msg.timestamp === 'number'
+                                           ? new Date(msg.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                                           : '')}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))
+                          )}
                       </div>
-                    </div>
-                  ))}
+                  )}
+
                 </div>
               </>
             ) : (

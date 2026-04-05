@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, UserRound, ArrowLeft, Calendar, X } from 'lucide-react';
+import { Send, UserRound, ArrowLeft, Calendar, X, CheckCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { db, auth } from '../firebaseConfig';
 import {
     collection, addDoc, query, orderBy, updateDoc,
     onSnapshot, serverTimestamp, doc, setDoc, getDoc
 } from 'firebase/firestore';
+import { analyzeMood } from '../utils/moodAnalyzer';
 
 const formatTimestamp = (ts) => {
     if (!ts) return new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -65,6 +66,13 @@ const ChatCounselor = () => {
         );
         const unsub = onSnapshot(q, (snapshot) => {
             const msgs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+            msgs.forEach(msg => {
+                if ((msg.sender === 'counselor' || msg.sender === 'system') && !msg.read) {
+                    updateDoc(doc(db, 'counselorChats', chatId, 'messages', msg.id), { read: true }).catch(() => {});
+                }
+            });
+
             msgs.sort((a, b) => {
                 const tA = a.createdAt?.toMillis ? a.createdAt.toMillis() : Date.now() + 100000;
                 const tB = b.createdAt?.toMillis ? b.createdAt.toMillis() : Date.now() + 100000;
@@ -97,16 +105,19 @@ const ChatCounselor = () => {
     if (slotStatus === 'approved' && chatMetadata?.approvedSlot) {
         isSlotApproved = true;
         approvedSlotDetails = chatMetadata.approvedSlot;
-    } else {
-        // Fallback: Check if they have a confirmed slot natively in counselorSlots
-        // This instantly repairs any desynced database state for the student
-        const activeSlot = slots.find(s => s.bookedByUid === chatId && s.status === 'confirmed');
-        if (activeSlot) {
+    } else if (slotStatus !== 'requested') {
+        // Only fallback to searching raw slots if we don't have an active pending request.
+        // Otherwise, we might accidentally lock onto an old, expired slot from earlier today.
+        const recentConfirmed = slots
+            .filter(s => s.bookedByUid === chatId && s.status === 'confirmed')
+            .sort((a, b) => new Date(`${b.date}T${b.startTime}`) - new Date(`${a.date}T${a.startTime}`));
+            
+        if (recentConfirmed.length > 0) {
             isSlotApproved = true;
             approvedSlotDetails = {
-                date: activeSlot.date,
-                time: activeSlot.startTime || activeSlot.time,
-                slotId: activeSlot.id
+                date: recentConfirmed[0].date,
+                time: recentConfirmed[0].startTime || recentConfirmed[0].time,
+                slotId: recentConfirmed[0].id
             };
         }
     }
@@ -152,24 +163,50 @@ const ChatCounselor = () => {
         return () => clearInterval(interval);
     }, [approvedSlotDetails, endSlotDateMillis]);
 
-    const sentFinalMessage = endSlotDateMillis ? messages.some(m => {
-        if (m.sender !== 'student') return false;
-        const msgTime = m.createdAt?.toMillis ? m.createdAt.toMillis() : Date.now();
-        return msgTime > endSlotDateMillis;
-    }) : false;
+    const [counselorTimeout, setCounselorTimeout] = useState(false);
+    useEffect(() => {
+        const checkTimeout = () => {
+            // Only enforce the 5-minute counselor inactivity timeout if the slot is officially EXPIRED.
+            if (slotTimeStatus === 'expired' && chatMetadata?.chatOpenedByCounselor && chatMetadata?.lastSenderRole === 'student' && chatMetadata?.lastMessageAt) {
+                const msgMillis = chatMetadata.lastMessageAt.toMillis ? chatMetadata.lastMessageAt.toMillis() : Date.now();
+                if (Date.now() - msgMillis > 5 * 60 * 1000) {
+                    setCounselorTimeout(true);
+                    updateDoc(doc(db, 'counselorChats', chatId), { chatOpenedByCounselor: false }).catch(() => {});
+                } else {
+                    setCounselorTimeout(false);
+                }
+            } else {
+                setCounselorTimeout(false);
+            }
+        };
+        const interval = setInterval(checkTimeout, 5000);
+        checkTimeout();
+        return () => clearInterval(interval);
+    }, [chatMetadata, chatId, slotTimeStatus]);
 
+    const chatOpenedByCounselor = chatMetadata?.chatOpenedByCounselor === true && !counselorTimeout;
     const canChat = isSlotApproved && slotTimeStatus === 'active';
     const hasSentFreeMessage = messages.some(m => m.sender === 'student');
-    const canSendFinalMessage = isSlotApproved && slotTimeStatus === 'expired' && !sentFinalMessage;
-    const isInputEnabled = canChat || !hasSentFreeMessage || canSendFinalMessage;
+    const isInputEnabled = chatOpenedByCounselor || canChat || !hasSentFreeMessage;
 
     const handleSelectSlot = async (slot) => {
+        const timeToUse = slot.startTime || slot.time;
+        
+        await updateDoc(doc(db, 'counselorSlots', slot.id), {
+            isBooked: true,
+            status: 'booked',
+            bookedBy: user.email,
+            bookedByEmail: user.email,
+            bookedByUid: user.uid || chatId
+        }).catch(() => {});
+
         await updateDoc(doc(db, 'counselorChats', chatId), {
-            requestedSlot: slot,
+            requestedSlot: { date: slot.date, time: timeToUse, slotId: slot.id },
             slotStatus: 'requested'
         });
+        
         await addDoc(collection(db, 'counselorNotifications'), {
-            text: `Student (${user.email}) requested a slot on ${slot.date} at ${slot.time}`,
+            text: `Student (${user.email}) requested a slot on ${slot.date} at ${timeToUse}`,
             type: 'slot_request',
             chatId,
             studentEmail: user.email,
@@ -179,7 +216,7 @@ const ChatCounselor = () => {
         setShowSlotsModal(false);
 
         await addDoc(collection(db, 'counselorChats', chatId, 'messages'), {
-            text: `You requested a slot on ${slot.date} at ${slot.time}. Please wait for counselor approval.`,
+            text: `You requested a slot on ${slot.date} at ${timeToUse}. Please wait for counselor approval.`,
             sender: 'system',
             createdAt: serverTimestamp()
         });
@@ -188,12 +225,6 @@ const ChatCounselor = () => {
     const handleSend = async (e) => {
         e.preventDefault();
         if (!input.trim() || !user) return;
-
-        // Debug logs
-        console.log("chatMetadata:", chatMetadata);
-        console.log("slotStatus:", slotStatus);
-        console.log("isSlotApproved:", isSlotApproved);
-        console.log("canChat:", canChat);
 
         const text = input.trim();
         setInput('');
@@ -209,6 +240,17 @@ const ChatCounselor = () => {
             createdAt: serverTimestamp()
         });
 
+        const mood = analyzeMood(text);
+        await addDoc(collection(db, 'studentMoodLogs'), {
+            studentId: user.uid,
+            source: 'counselor_chat',
+            text: text.length > 50 ? text.substring(0, 50) + '...' : text,
+            score: mood.score,
+            emotion: mood.emotion,
+            dateStr: new Date().toLocaleDateString('en-US'),
+            timestamp: serverTimestamp()
+        });
+
         if (!canChat && !hasSentFreeMessage) {
             await addDoc(collection(db, 'counselorChats', chatId, 'messages'), {
                 text: "Please check Slot Management for any available slots, or wait for the counselor to add one. Come back after booking a slot!",
@@ -220,7 +262,8 @@ const ChatCounselor = () => {
         await updateDoc(doc(db, 'counselorChats', chatId), {
             lastSenderRole: 'student',
             lastMessage: text,
-            lastMessageAt: serverTimestamp()
+            lastMessageAt: serverTimestamp(),
+            hasUnreadMessagesFromStudent: true
         }).catch(() => { });
 
         await addDoc(collection(db, 'counselorNotifications'), {
@@ -275,7 +318,7 @@ const ChatCounselor = () => {
             )}
             {isSlotApproved && approvedSlotDetails && slotTimeStatus === 'expired' && (
                 <div className="bg-red-50 border-b border-red-200 px-4 py-2 text-sm text-red-800 text-center">
-                    {canSendFinalMessage ? "Your slot has ended. You may send one final wrap-up message." : `Your slot from ${approvedSlotDetails.date} at ${approvedSlotDetails.time} has ended. Please request a new slot.`}
+                    Your slot from {approvedSlotDetails.date} at {approvedSlotDetails.time} has ended. Please request a new slot.
                 </div>
             )}
             {isSlotApproved && approvedSlotDetails && slotTimeStatus === 'active' && (
@@ -309,9 +352,14 @@ const ChatCounselor = () => {
                                     }`}>
                                     <p className="text-[15px] leading-relaxed">{message.text}</p>
                                     {message.sender !== 'system' && (
-                                        <span className={`text-[10px] block mt-1 ${message.sender === 'student' ? 'text-blue-100 text-right' : 'text-gray-400 text-left'}`}>
-                                            {formatTimestamp(message.createdAt)}
-                                        </span>
+                                        <div className={`flex items-center mt-1 ${message.sender === 'student' ? 'justify-end text-blue-100' : 'justify-start text-gray-400'}`}>
+                                            <span className="text-[10px] block mt-0.5">
+                                                {formatTimestamp(message.createdAt)}
+                                            </span>
+                                            {message.sender === 'student' && (
+                                                <CheckCheck size={14} className={`ml-1 mt-0.5 ${message.read ? 'text-[#34B7F1] drop-shadow-sm' : 'text-blue-200 opacity-80'}`} />
+                                            )}
+                                        </div>
                                     )}
                                 </div>
                             </div>
@@ -327,7 +375,7 @@ const ChatCounselor = () => {
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        placeholder={canChat ? "Message your counselor..." : (!hasSentFreeMessage ? "Send your first message..." : (slotTimeStatus === 'upcoming' ? "Waiting for slot to begin..." : (canSendFinalMessage ? "Send one final wrap-up message..." : (slotTimeStatus === 'expired' ? "Slot expired. Book a new slot" : "Book a slot to start chatting..."))))}
+                        placeholder={chatOpenedByCounselor ? "Counselor opened the chat. You can reply..." : (counselorTimeout ? "Chat closed due to 5 mins inactivity." : (canChat ? "Message your counselor..." : (!hasSentFreeMessage ? "Send your first message..." : (slotStatus === 'requested' ? "Waiting for counselor approval..." : (slotTimeStatus === 'upcoming' ? "Waiting for slot to begin..." : (slotTimeStatus === 'expired' ? "Slot expired. Book a new slot." : "Book a slot to start chatting..."))))))}
                         disabled={!isInputEnabled}
                         className="flex-1 bg-background border border-gray-200 text-gray-800 px-5 py-3 rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:bg-white transition-all text-[15px] disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
                     />

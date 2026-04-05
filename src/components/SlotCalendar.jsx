@@ -19,7 +19,22 @@ const SlotCalendar = () => {
         const q = query(collection(db, 'counselorSlots'), orderBy('date', 'asc'));
         const unsub = onSnapshot(q, (snapshot) => {
             const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-            setSlots(data);
+
+            const now = new Date();
+            const yyyy = now.getFullYear();
+            const mm = String(now.getMonth() + 1).padStart(2, '0');
+            const dd = String(now.getDate()).padStart(2, '0');
+            const todayStr = `${yyyy}-${mm}-${dd}`;
+
+            data.forEach(slot => {
+                if (slot.date && slot.date < todayStr) {
+                    deleteDoc(doc(db, 'counselorSlots', slot.id)).catch(() => {});
+                }
+            });
+
+            const currentSlots = data.filter(s => !s.date || s.date >= todayStr);
+
+            setSlots(currentSlots);
             setLoading(false);
         });
         return () => unsub();

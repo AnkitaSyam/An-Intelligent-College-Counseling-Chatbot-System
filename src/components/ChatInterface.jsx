@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Info, X, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Send, Info, X, CheckCircle, XCircle, Clock, CheckCheck } from 'lucide-react';
 import { db } from '../firebaseConfig';
 import {
     collection, addDoc, query, orderBy,
@@ -37,6 +37,21 @@ const ChatInterface = ({ student }) => {
         );
         const unsub = onSnapshot(q, (snapshot) => {
             const msgs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+            // Fix: Mark student messages as read automatically
+            let newUnreadFound = false;
+            msgs.forEach(msg => {
+                if (msg.sender === 'student' && !msg.read) {
+                    newUnreadFound = true;
+                    updateDoc(doc(db, 'counselorChats', chatId, 'messages', msg.id), { read: true }).catch(() => {});
+                }
+            });
+            
+            // Clear the notification flag structurally on the parent room if unread messages existed and were just read.
+            // Or if we just successfully loaded the chat and are viewing it, forcefully verify no unread remain
+            if (newUnreadFound || msgs.length > 0) {
+                 updateDoc(doc(db, 'counselorChats', chatId), { hasUnreadMessagesFromStudent: false }).catch(() => {});
+            }
             
             // Fix: Re-sort to force pending messages to the bottom locally
             msgs.sort((a, b) => {
@@ -88,7 +103,7 @@ const ChatInterface = ({ student }) => {
         return () => clearInterval(interval);
     }, [chatMetadata]);
 
-    const canChat = isSlotApproved && isChatActive;
+    const canChat = true; // Counselor can always chat
 
     const handleApproveSlot = async () => {
         if (!chatMetadata?.requestedSlot) return;
@@ -108,6 +123,13 @@ const ChatInterface = ({ student }) => {
                 approvedSlot: chatMetadata.requestedSlot,
                 requestedSlot: null // clear requested
             });
+            
+            // Sync with global counselorSlots so Dashboard recognizes it
+            if (chatMetadata?.requestedSlot?.slotId) {
+                await updateDoc(doc(db, 'counselorSlots', chatMetadata.requestedSlot.slotId), {
+                    status: 'confirmed'
+                }).catch(() => {});
+            }
         } catch (e) {
             console.error("Error approving slot:", e);
         }
@@ -128,6 +150,17 @@ const ChatInterface = ({ student }) => {
                 slotStatus: 'pending',
                 requestedSlot: null
             });
+            
+            // Free the slot in counselorSlots so it is available again
+            if (chatMetadata?.requestedSlot?.slotId) {
+                await updateDoc(doc(db, 'counselorSlots', chatMetadata.requestedSlot.slotId), {
+                    status: 'available',
+                    isBooked: false,
+                    bookedBy: null,
+                    bookedByEmail: null,
+                    bookedByUid: null
+                }).catch(() => {});
+            }
         } catch (e) {
             console.error("Error rejecting slot:", e);
         }
@@ -151,7 +184,8 @@ const ChatInterface = ({ student }) => {
         await updateDoc(doc(db, 'counselorChats', chatId), {
             lastSenderRole: 'counselor',
             lastMessage: text,
-            lastMessageAt: serverTimestamp()
+            lastMessageAt: serverTimestamp(),
+            chatOpenedByCounselor: true // This will unlock the chat for the student
         }).catch(() => {}); // ignore if doc doesn't exist yet
 
         // Notify student via Firestore
@@ -218,9 +252,14 @@ const ChatInterface = ({ student }) => {
                                 ? 'bg-primary text-white rounded-br-sm'
                                 : 'bg-card border border-gray-200 text-gray-800 rounded-bl-sm'}`}>
                                 <p className="text-[14px] leading-relaxed">{message.text}</p>
-                                <span className={`text-[10px] block mt-1 ${message.sender === 'counselor' ? 'text-blue-100 text-right' : 'text-gray-400 text-left'}`}>
-                                    {formatTimestamp(message.createdAt)}
-                                </span>
+                                <div className={`flex items-center mt-1 ${message.sender === 'counselor' ? 'justify-end text-blue-100' : 'justify-start text-gray-400'}`}>
+                                    <span className="text-[10px] block mt-0.5">
+                                        {formatTimestamp(message.createdAt)}
+                                    </span>
+                                    {message.sender === 'counselor' && (
+                                        <CheckCheck size={14} className={`ml-1 mt-0.5 ${message.read ? 'text-[#34B7F1] drop-shadow-sm' : 'text-blue-200 opacity-80'}`} />
+                                    )}
+                                </div>
                             </div>
                         </div>
                     ))}
@@ -235,8 +274,8 @@ const ChatInterface = ({ student }) => {
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        placeholder={canChat ? "Type a message..." : "Chat is only available during the allotted time slot"}
-                        disabled={!canChat}
+                        placeholder="Type a message..."
+                        disabled={false}
                         className="flex-1 bg-background border border-gray-200 text-gray-800 px-4 py-2 rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:bg-white transition-all text-[14px] disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
                     />
                     <button

@@ -21,7 +21,7 @@ const TutorChat = () => {
     const [hasAccess, setHasAccess] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [approvedAt, setApprovedAt] = useState(null);
+    const [cutoffTime, setCutoffTime] = useState(null);
     
     const messagesEndRef = useRef(null);
 
@@ -71,7 +71,8 @@ const TutorChat = () => {
                 });
                 
                 const latestApprovedReq = approvedReqs[0];
-                setApprovedAt(latestApprovedReq.data().updatedAt);
+                // Limit scope to the time the request was MADE, not approved
+                setCutoffTime(latestApprovedReq.data().timestamp || latestApprovedReq.data().updatedAt);
                 
                 // Load student details
                 const studentDoc = await getDoc(doc(db, 'users', studentUid));
@@ -100,9 +101,9 @@ const TutorChat = () => {
         const unsubscribe = onSnapshot(q, (snapshot) => {
             let msgs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
             
-            // Filter messages to only show history from before the request was accepted
-            if (approvedAt) {
-                const cutoff = approvedAt.toMillis ? approvedAt.toMillis() : Date.now();
+            // Filter messages to only show history from before the request was made
+            if (cutoffTime) {
+                const cutoff = cutoffTime.toMillis ? cutoffTime.toMillis() : Date.now();
                 msgs = msgs.filter(m => {
                     const msgTime = m.createdAt?.toMillis ? m.createdAt.toMillis() : Date.now();
                     return msgTime <= cutoff;
@@ -116,7 +117,7 @@ const TutorChat = () => {
         });
 
         return () => unsubscribe();
-    }, [hasAccess, studentId, approvedAt]);
+    }, [hasAccess, studentId, cutoffTime]);
 
     if (loading) {
         return (
@@ -185,7 +186,7 @@ const TutorChat = () => {
                     <Lock className="shrink-0 mr-3 mt-0.5 text-blue-500" size={18} />
                     <div>
                         <p className="font-semibold mb-1">Historical Record</p>
-                        <p>You have been granted restricted, read-only access to this student's history up until the moment your request was approved. Interaction is disabled to comply with privacy protocols.</p>
+                        <p>You have been granted restricted, read-only access to this student's history up until the moment your request was made. Interaction is disabled to comply with privacy protocols.</p>
                     </div>
                 </div>
 

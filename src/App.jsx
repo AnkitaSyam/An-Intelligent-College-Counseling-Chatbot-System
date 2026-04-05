@@ -12,6 +12,7 @@ import Notifications from "./pages/Notifications";
 import Settings from "./pages/Settings";
 import StudentSlotManagement from "./pages/StudentSlotManagement";
 import StudentNotifications from "./pages/StudentNotifications";
+import Journal from "./pages/Journal";
 import AIChatSummary from "./pages/AIChatSummary";
 import TutorLogin from "./pages/TutorLogin";
 import TutorDashboard from "./pages/TutorDashboard";
@@ -32,6 +33,7 @@ function App() {
           <Route path="/chat-ai" element={<ChatAI />} />
           <Route path="/chat-counselor" element={<ChatCounselor />} />
           <Route path="/profile" element={<Profile />} />
+          <Route path="/journal" element={<Journal />} />
           <Route path="/slot-management" element={<StudentSlotManagement />} />
           <Route path="/notifications" element={<StudentNotifications />} />
           

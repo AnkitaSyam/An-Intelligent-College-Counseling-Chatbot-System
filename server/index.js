@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import fetch from "node-fetch";
+import Groq from "groq-sdk";
 
 dotenv.config();
 
@@ -9,12 +9,21 @@ const app = express();
 app.use(cors({ origin: "http://localhost:5173" }));
 app.use(express.json());
 
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
 app.post("/api/chat", async (req, res) => {
   const { message } = req.body;
   if (!message) return res.status(400).json({ error: "Message required" });
 
   const prompt = `
-You are a compassionate college counseling assistant helping students with academic stress, career confusion, and personal challenges.
+You are a college counseling assistant. You ONLY answer questions related to:
+- Academic stress, studies, exams
+- Mental health and emotional wellbeing
+- Career guidance and confusion
+- College life and personal challenges
+
+If the student asks anything unrelated (like science facts, recipes, general knowledge), respond with:
+"I'm here to support you with counseling and college-related concerns. Is there anything on your mind about your studies or wellbeing?"
 
 A student said: "${message}"
 
@@ -31,37 +40,20 @@ Rules:
 - shouldAlert is true only if sentiment is negative AND severity is medium or high
 - Never mention sentiment or alerts to the student in your reply
 - Be warm, empathetic, and concise
-  `;
+`;
 
   try {
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { 
-             temperature: 0.3, 
-             responseMimeType: "application/json" 
-          }
-        })
-      }
-    );
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
+      response_format: { type: "json_object" }
+    });
 
-    const data = await geminiRes.json();
-    console.log("Gemini raw response:", JSON.stringify(data, null, 2));
-
-    if (!data.candidates?.[0]) {
-      console.log("No candidates found");
-      return res.status(500).json({ error: "No response from Gemini" });
-    }
-
-    const raw = data.candidates[0].content.parts[0].text;
-    const cleaned = raw.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(cleaned);
-
+    const raw = completion.choices[0].message.content;
+    const parsed = JSON.parse(raw);
     res.json(parsed);
+
   } catch (err) {
     console.error("Error:", err.message);
     res.status(500).json({ error: err.message });

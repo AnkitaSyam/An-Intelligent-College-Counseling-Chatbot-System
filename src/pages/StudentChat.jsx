@@ -70,8 +70,15 @@ const StudentChat = () => {
 
     // Check if student has sent the last message (new message indicator)
     const checkHasNewMessage = (studentId) => {
-        // We'll use a separate state per ChatInterface; this is a basic indicator
-        return allChats[studentId]?.lastSenderRole === 'student';
+        const chatEntry = allChats[studentId];
+        if (!chatEntry) return false;
+        
+        // Use exact read-receipt driven flag if available, fallback otherwise to legacy behavior
+        if (chatEntry.hasUnreadMessagesFromStudent !== undefined) {
+            return chatEntry.hasUnreadMessagesFromStudent;
+        }
+        
+        return chatEntry.lastSenderRole === 'student';
     };
 
     return (

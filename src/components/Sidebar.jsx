@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, LogOut, CalendarDays, Bell, Settings as SettingsIcon } from 'lucide-react';
+import { LayoutDashboard, LogOut, CalendarDays, Bell, Settings as SettingsIcon, PenLine } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { db } from '../firebaseConfig';
 import { collection, onSnapshot, query } from 'firebase/firestore';
@@ -53,6 +53,10 @@ const Sidebar = () => {
                 <NavLink to="/dashboard" className={navItemClass}>
                     <LayoutDashboard size={20} />
                     <span className="font-medium">Dashboard</span>
+                </NavLink>
+                <NavLink to="/journal" className={navItemClass}>
+                    <PenLine size={20} />
+                    <span className="font-medium">Journal</span>
                 </NavLink>
                 <NavLink to="/slot-management" className={navItemClass}>
                     <CalendarDays size={20} />
